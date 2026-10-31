@@ -74,3 +74,123 @@ The first playable prototype will not include:
 - Localization or a complete accessibility suite beyond keeping the six tile types visually distinguishable.
 - Packaging, an installer, automatic updates, or distribution through an application store.
 - Automated strategy, opponent AI, or a hint system.
+
+## TODO 2: Identify Stakeholders and Elicit Needs
+
+### 1. Stakeholder analysis
+
+#### Player
+
+**Interests**
+
+- Enjoying a recognizable and satisfying match-3 play loop.
+- Understanding the board, available actions, score, and results of each action.
+- Starting and restarting a game with little effort.
+
+**Expectations**
+
+- Tile selection and swapping feel clear and responsive.
+- Valid matches, invalid moves, cascades, scoring, and board recovery behave consistently.
+- Tiles are visually distinguishable and the game provides enough feedback to understand what happened.
+- The game remains playable without an internet connection.
+
+**Constraints**
+
+- The player may have no prior knowledge of this particular game.
+- The player uses the input devices and display available on the local computer.
+- The player should not need an account, server, or complicated setup.
+- Differences in vision, display quality, or window size may make color-only distinctions difficult.
+
+#### Developer
+
+**Interests**
+
+- Delivering the first playable prototype within limited time and scope.
+- Translating the agreed match-3 behavior into logic that can be tested and debugged.
+- Keeping gameplay rules separate enough from presentation details to support safe changes.
+
+**Expectations**
+
+- The prototype scope, gameplay terms, and completion criteria are unambiguous.
+- Important cases such as intersecting matches, cascades, invalid swaps, and boards with no legal moves have defined outcomes.
+- Failures can be reproduced and diagnosed without depending entirely on random play.
+- Dependencies and setup steps remain minimal and documented.
+
+**Constraints**
+
+- The developer must work within the available language, libraries, tools, and schedule.
+- Random board generation creates edge cases that may be difficult to reproduce.
+- A prototype should avoid architecture or features that are unnecessary for its stated goal.
+- Implementation choices must remain compatible with the intended local runtime.
+
+#### Maintainer
+
+**Interests**
+
+- Understanding and changing the game safely after the first implementation.
+- Locating defects quickly and avoiding regressions in core gameplay.
+- Updating dependencies or runtime versions with limited effort.
+
+**Expectations**
+
+- Code responsibilities, gameplay rules, setup, and execution steps are understandable and documented.
+- Core behavior can be checked independently of visual presentation where practical.
+- Constants and configurable values are not unnecessarily duplicated throughout the implementation.
+- Failures are reported clearly enough to support diagnosis.
+
+**Constraints**
+
+- The maintainer may not be the original developer.
+- Future maintenance time and knowledge of undocumented decisions may be limited.
+- Changes to the runtime or external libraries may introduce compatibility problems.
+
+#### Platform/runtime environment
+
+This is a supporting technical stakeholder representing the local computer, operating system, language runtime, display system, and installed dependencies on which the game relies.
+
+**Interests**
+
+- Running the game within available CPU, memory, display, input, and storage resources.
+- Loading only compatible, available dependencies.
+- Starting and stopping without damaging the host environment.
+
+**Expectations**
+
+- The game has a documented launch method and supported runtime configuration.
+- Normal play does not require network access, elevated privileges, or external services.
+- Input events, rendering, and game-state updates are handled promptly.
+- The program exits cleanly and handles foreseeable startup problems in an understandable way.
+
+**Constraints**
+
+- Runtime versions, operating systems, screen sizes, permissions, and dependency availability may vary.
+- Local machines may have modest processing power and memory.
+- The environment cannot compensate for missing dependencies or undocumented setup steps.
+- Platform-specific behavior may limit portability unless supported environments are deliberately chosen.
+
+### 2. Initial stakeholder needs
+
+The following statements are elicited stakeholder needs, not yet formal system requirements. **Explicit** needs follow directly from stated stakeholder expectations or the prototype context. **Implicit** needs are necessary to support those expectations even when a stakeholder may not request them directly. Later requirements work should refine, prioritize, and make them fully measurable.
+
+| ID | Type | Source stakeholder | Concern | Stakeholder need |
+| --- | --- | --- | --- | --- |
+| NEED-01 | Explicit | Player | Gameplay | The player needs to select and attempt swaps between tiles using simple, understandable controls. |
+| NEED-02 | Explicit | Player | Gameplay | The player needs valid matches, clearing, gravity, refilling, cascades, and scoring to follow consistent rules. |
+| NEED-03 | Explicit | Player | Usability | The player needs clear visual feedback for selection, accepted moves, rejected moves, board changes, and score changes. |
+| NEED-04 | Implicit | Player | Usability | The player needs tile types to remain distinguishable without relying only on subtle color differences. |
+| NEED-05 | Explicit | Player | Usability | The player needs to see the current score and restart play without restarting the entire application. |
+| NEED-06 | Implicit | Player | Reliability | The player needs the game to remain recoverable and playable when the board has no legal move. |
+| NEED-07 | Explicit | Player | Local execution | The player needs to launch and play the game offline on the supported local computer without an account or external service. |
+| NEED-08 | Explicit | Developer | Gameplay | The developer needs agreed outcomes for invalid swaps, long and intersecting matches, cascades, initial boards, and boards with no legal moves. |
+| NEED-09 | Implicit | Developer | Reliability | The developer needs controllable or reproducible game states so edge cases and reported defects can be investigated. |
+| NEED-10 | Explicit | Developer | Maintainability | The developer needs a bounded prototype scope and a clear separation between core game behavior and presentation concerns. |
+| NEED-11 | Explicit | Developer | Local execution | The developer needs a small, documented dependency and setup footprint compatible with the selected local runtime. |
+| NEED-12 | Explicit | Maintainer | Maintainability | The maintainer needs readable structure and documentation for setup, launch, gameplay rules, and important design decisions. |
+| NEED-13 | Implicit | Maintainer | Maintainability | The maintainer needs central definitions for changeable gameplay values so routine changes do not require scattered edits. |
+| NEED-14 | Explicit | Maintainer | Reliability | The maintainer needs practical checks for core gameplay behavior so changes can be made without silently breaking established behavior. |
+| NEED-15 | Implicit | Maintainer | Reliability | The maintainer needs understandable diagnostic information when startup or gameplay processing fails. |
+| NEED-16 | Explicit | Platform/runtime environment | Local execution | The local environment needs a documented, compatible runtime configuration and launch method. |
+| NEED-17 | Implicit | Platform/runtime environment | Performance | The local environment needs the game to keep input and visual updates responsive during ordinary play on modest hardware. |
+| NEED-18 | Implicit | Platform/runtime environment | Performance | The local environment needs board generation and cascade resolution to finish without unbounded processing or excessive resource use. |
+| NEED-19 | Explicit | Platform/runtime environment | Reliability | The local environment needs the game to start and exit cleanly without elevated privileges, network availability, or unintended changes outside the game process. |
+| NEED-20 | Implicit | Developer; Maintainer; Platform/runtime environment | Portability | The involved technical stakeholders need supported platforms and runtime versions to be identified so compatibility can be evaluated and maintained. |
