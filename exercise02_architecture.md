@@ -4,29 +4,79 @@
 
 ### Responsibility Overview
 
-| Responsibility | Purpose | Owns | Must Not Own | Evidence from Requirements or Current Code |
-| --- | --- | --- | --- | --- |
-| Board and tile management | Maintain a valid 8 x 8 arrangement of the six tile identities and supply reproducible or random tiles. | Board dimensions and tile-count constants; board representation and copying; tile-value validation; playable-board generation; random and injected refill sources; the full, match-free, playable-board invariant. | Mouse events, colors and letters, score display, swap feedback, or the definition of a match-producing move. | FR-01, FR-11, DR-04; `BOARD_ROWS`, `BOARD_COLUMNS`, `TILE_TYPES`, `copy_board`, `generate_playable_board`, `Game._validate_board`, and `Game._next_tile` in `match3.py`. |
-| Move and rule processing | Decide whether a requested exchange is allowed and preserve state when it is rejected. | Coordinate bounds, orthogonal adjacency, tentative swapping, matchless-swap reversal, legal-move discovery, and accepted/rejected `MoveResult` data. | Match scanning details, gravity, score rendering, tkinter selection state, or status-message wording. | FR-02–FR-04, DR-01; `in_bounds`, `are_adjacent`, `_swap`, `swap_creates_match`, `has_legal_move`, and `Game.attempt_swap`. |
-| Match detection | Identify every cell in all current horizontal and vertical runs of at least three identical, non-empty tiles. | Run scanning and the union of matched coordinates, including long, simultaneous, and intersecting matches with each coordinate represented once. | Clearing cells, awarding points, generating replacements, deciding UI feedback, or controlling cascade timing. | FR-05, DR-02; `find_matches` returns a `set[Coordinate]`; `MatchDetectionTests` covers runs of four and five, disjoint matches, intersections, and empty cells. |
-| Removal, refill, and cascading | Transform an accepted matched board into a full stable board in the required order. | Simultaneous clearing, downward column compaction, refill, repeated detection, cascade-step counting, and resolution-step notifications. | Choosing whether the original user swap was adjacent, defining points per tile, rendering animations, or accepting clicks during resolution. | FR-06, DR-03; `Game._resolve_cascades` and `Game._apply_gravity_and_refill`; move tests cover gravity, two-step cascades, and a controlled ten-step cascade. |
-| Scoring | Maintain and update the session score according to the prototype rule. | `POINTS_PER_TILE`, the current `Game.score`, ten points per distinct cleared coordinate, score reset on restart, and score preservation during dead-board recovery. | Detecting matches, deciding which coordinates are distinct, drawing the score label, cascade multipliers, bonuses, or persistent high scores. | FR-07, DR-06, FR-08, FR-10; scoring occurs from `len(current_matches)` in `_resolve_cascades`, while `restart` resets and `ensure_playable` preserves the score. |
-| Game-state coordination | Sequence initialization, selection outcomes, resolution, recovery, restart, and return to a playable state. | The move-level workflow; ownership of the current board and score through `Game`; cascade completion; stable-board and playability checks; dead-board regeneration; and result reporting. | Low-level run scanning, tile button styling, direct operating-system input handling, interface selection and busy state, or test assertions. | FR-01, FR-06, FR-08, FR-10, DR-04–DR-05 and the TODO 5 state model; `Game.attempt_swap`, `restart`, and `ensure_playable`. |
-| User input | Convert player actions into selection, swap-attempt, and restart requests while blocking board-changing input during resolution. | Tile-button callbacks, first/second selection handling, coordinate forwarding, ignored input while busy, and restart invocation. | Determining match legality, mutating tiles directly, calculating score, generating boards, or choosing tile identity. | UR-01, FR-02, FR-09, and the input-lock interpretation of FR-06/DR-04; `Match3App.on_tile_click`, `restart`, and `_set_busy` in `main.py`. |
-| Presentation | Make the current state and action outcomes visible and understandable. | The tkinter window and widgets; color-and-letter tile styles; selection highlighting; board rendering; score text; accepted/rejected/resolution status text; enabled/disabled control appearance. | Domain equality, adjacency, match detection, gravity, scoring calculations, random generation, or dead-board policy. | UR-03–UR-04, FR-07, FR-09, NFR-01; `TILE_STYLES`, `Match3App.render`, `_show_resolution_step`, and the status/score variables in `main.py`. |
-| Testing and validation | Provide repeatable evidence that the implemented responsibilities satisfy the validated prototype scope. | Controlled boards, seeded random sources, injected refill sequences, state comparisons, timing checks, and assertions for generation, matching, moves, gravity, scoring, cascades, recovery, and restart. | Production game decisions, player-facing test controls, replacement gameplay code, or claims about GUI behavior that were not manually observed. | UR-07, FR-11, NFR-03, NFR-07; the 16 `unittest` cases in `tests/test_match3.py`, the commands in `README.md`, and the TODO 6 traceability table. |
+| Responsibility | Purpose | Owns | Must Not Own | GUI-independent | Requirement IDs |
+| --- | --- | --- | --- | --- | --- |
+| Board and tile management | Maintain the board and tile data used by the game. | Board content; board dimensions and tile identities; board mutation primitives; validation and tile supply; the invariant that every stable state waiting for input is full, match-free, and has at least one legal move. The invariant is not required during resolution. | The decision to replace the current board, selection state, swap legality, scoring, or presentation. | Yes | FR-01, FR-11, DR-04 |
+| Move and rule processing | Evaluate a requested exchange. | Bounds and orthogonal-adjacency decisions; whether one exchange creates a match; matchless-swap rejection. | The selected tile or selection transitions, board content or its playable invariant, match scanning, score, or feedback text. | Yes | FR-02, FR-03, FR-04, DR-01 |
+| Match detection | Identify every current horizontal and vertical run of at least three identical tiles. | The union of matched coordinates, including complete long and simultaneous runs with intersecting coordinates represented once. | Clearing cells, applying gravity, refilling, scoring, or UI feedback. | Yes | FR-05, DR-02 |
+| Removal, refill, and cascading | Resolve all matches in the required order until the board is stable. | Simultaneous removal; downward gravity; refill; repeated detection; cascade completion and per-step cleared-cell results. | Initial swap legality, the scoring formula or score total, board replacement after a dead board, or rendering. | Yes | FR-05, FR-06, DR-03 |
+| Scoring | Define the points produced by a resolution step. | The rule of exactly 10 points per distinct cleared tile, including cascades and excluding multipliers or bonuses; calculation of the score increment. | The accumulated score total, restart reset, recovery preservation, match membership, or score display. | Yes | FR-07, DR-06 |
+| Game-state coordination | Coordinate the session and the state-machine workflow. | First/second selection rules and the selected tile; sequencing of move validation and resolution; the accumulated score total; score reset on restart and preservation during recovery; readiness decisions; when a new board replaces the current one; dead-board recovery; result reporting. | Board content and invariant evaluation, the scoring formula, match detection, input-event capture, the input lock, or rendering. | Yes | UR-02, UR-04, UR-05, FR-07, FR-08, FR-10, DR-04, DR-05 |
+| User input | Translate desktop actions into GUI-independent coordination requests. | Mouse-click and Restart-event translation. **ASSUMPTION:** one move is resolved in one synchronous core call, so User input owns the input lock needed while the GUI presents resolution steps; the lock prevents another click from changing the board before coordination returns to a stable waiting state. | The selected tile, selection rules, swap legality, board content, score, or status wording. | No | UR-01, FR-02, FR-06 |
+| Presentation | Show the current game and action outcomes. | Tile colors and symbols; selected-tile highlighting; board and score rendering; accepted, rejected, resolution, and recovery feedback; control appearance. | Selection state, domain equality, swap legality, matching, board mutation, score calculation, or recovery decisions. | No | UR-03, UR-04, FR-07, FR-09, NFR-01 |
 
 ### Responsibility Boundaries
 
-The primary boundary is between the domain core and the desktop interface. `match3.py` must be usable without creating a window: it owns tile identities, the board, gameplay rules, resolution, score, and recovery. `main.py` may read that state and request operations, but it should not reproduce or override the rules. This boundary is what allows the tests to exercise the complete match-3 loop without importing tkinter.
+Board and tile management is the sole owner of board content and invariant evaluation. Game-state coordination decides when initialization, restart, or recovery replaces that content. The playable-board invariant applies whenever the game is stable and waiting for input; temporary empty cells and matches are permitted during resolution.
 
-Match detection is separate from match resolution. Detection answers only “which coordinates are matched now?” by returning a set. Resolution consumes that set, clears it simultaneously, invokes gravity and refill, and asks the detector again. Scoring uses the size of the same set, so an intersecting coordinate cannot be counted twice. Keeping these concerns conceptually separate makes the order in DR-03 visible even though the current implementation places them in one module.
+Game-state coordination owns session state: the selected coordinate, selection transitions, score total, and move lifecycle. Move and rule processing makes stateless legality decisions. Scoring produces a score increment but does not store the total. This keeps selection and scoring testable without a GUI.
 
-Board and tile management supplies valid data; move processing decides what actions are legal. Generating a match-free playable board and supplying refill tiles are not the same responsibility as deciding whether two selected coordinates are adjacent or whether their exchange creates a match. Similarly, presentation assigns the visible letters A–F and colors, while the core compares integer tile identities. A visual change therefore must not alter match equality.
+Match detection only identifies coordinates. Removal, refill, and cascading consumes that result and controls resolution order. Presentation observes results but does not make domain decisions. User input translates events and, under the stated assumption, owns the input lock rather than the selected tile.
 
-Game-state coordination composes the narrower responsibilities. It sequences a tentative swap, rejection or resolution, cascade completion, a legal-move check, and possible dead-board recovery. It should delegate the individual calculations instead of embedding a second match detector or scoring rule. On the interface side, `selected` and `busy` coordinate interaction state: tile input is disabled during the synchronous core operation, and rendering resumes after a ready state is returned.
+### Cross-cutting constraints
 
-Testing and validation remain outside production behavior. Seeded random generators, predefined boards, and refill sequences are dependency inputs used to reproduce scenarios; they are not player options. Automated tests establish domain behavior, while visual selection, feedback, normal close, and general GUI interaction require the manual acceptance evidence described in Exercise 1.
+- **GUI-independent testability and deterministic verification:** core responsibilities must be exercisable without opening a window, with controlled state or randomness. IDs: UR-07, FR-11, NFR-07.
+- **Performance and reliability:** input feedback, generation, recovery, cascade processing, and controlled robustness must meet their validated limits. IDs: UR-09, NFR-02, NFR-03. NFR-04 is deferred (Won't have for this prototype).
+- **Maintainability and core/GUI separation:** responsibilities must remain understandable and avoid duplicating central gameplay values. IDs: UR-08 and NFR-05, both deferred (Should have).
+- **Documentation and scope control:** the supported environment, commands, dependencies, rules, and design decisions must be documented without adding out-of-scope product features. IDs: NFR-06, NFR-08.
+- **Local runtime, offline operation, host integrity, and shutdown:** the architecture must run locally without accounts, services, elevated privileges, or persistent game data and must close cleanly. IDs: UR-06, NFR-09, NFR-10, NFR-12, NFR-13. NFR-11 is deferred (Could have).
+- **Concrete TODO 6 delivery constraints:** Python 3.13, standard-library tkinter, and no third-party packages are the documented realization of NFR-06, NFR-09, and NFR-10.
+
+### Requirement Traceability
+
+This list covers the 39 formal requirements in TODO 3. NEED identifiers are stakeholder-need sources rather than requirements.
+
+- UR-01 → User input; Game-state coordination.
+- UR-02 → Game-state coordination.
+- UR-03 → Presentation.
+- UR-04 → Game-state coordination; Presentation.
+- UR-05 → Game-state coordination.
+- UR-06 → Cross-cutting: local runtime, offline operation, host integrity, and shutdown.
+- UR-07 → Cross-cutting: GUI-independent testability and deterministic verification.
+- UR-08 → Cross-cutting: maintainability and core/GUI separation — **deferred (Should have)**.
+- UR-09 → Cross-cutting: performance and reliability.
+- FR-01 → Board and tile management.
+- FR-02 → User input; Game-state coordination; Move and rule processing.
+- FR-03 → Move and rule processing; Game-state coordination.
+- FR-04 → Move and rule processing; Game-state coordination.
+- FR-05 → Match detection; Removal, refill, and cascading.
+- FR-06 → Removal, refill, and cascading; User input.
+- FR-07 → Scoring; Game-state coordination; Presentation.
+- FR-08 → Game-state coordination; Board and tile management.
+- FR-09 → Presentation.
+- FR-10 → Game-state coordination.
+- FR-11 → Cross-cutting: GUI-independent testability and deterministic verification.
+- NFR-01 → Presentation.
+- NFR-02 → Cross-cutting: performance and reliability.
+- NFR-03 → Cross-cutting: performance and reliability.
+- NFR-04 → Cross-cutting: performance and reliability — **deferred (Won't have for this prototype)**.
+- NFR-05 → Cross-cutting: maintainability and core/GUI separation — **deferred (Should have)**.
+- NFR-06 → Cross-cutting: documentation and scope control; local runtime.
+- NFR-07 → Cross-cutting: GUI-independent testability and deterministic verification.
+- NFR-08 → Cross-cutting: documentation and scope control.
+- NFR-09 → Cross-cutting: local runtime, offline operation, host integrity, and shutdown.
+- NFR-10 → Cross-cutting: local runtime, offline operation, host integrity, and shutdown.
+- NFR-11 → Cross-cutting: local runtime diagnostics — **deferred (Could have)**.
+- NFR-12 → Cross-cutting: local runtime, offline operation, host integrity, and shutdown.
+- NFR-13 → Cross-cutting: local runtime, offline operation, host integrity, and shutdown.
+- DR-01 → Move and rule processing.
+- DR-02 → Match detection.
+- DR-03 → Removal, refill, and cascading; Scoring.
+- DR-04 → Board and tile management; Game-state coordination.
+- DR-05 → Game-state coordination.
+- DR-06 → Scoring.
+
+## Notes for TODO 6 (current code)
 
 ### Current Implementation Observations
 
@@ -37,3 +87,32 @@ Within `match3.py`, the responsibility areas are logical boundaries rather than 
 There are several differences between the requirements model and the concrete implementation. TODO 5 describes explicit lifecycle states such as Validating, Detecting Matches, Refilling, and Recovering, but the code does not define a state enum or state-machine object; synchronous `Game` calls plus `Match3App.selected` and `busy` provide the required observable behavior. FR-08 permits reshuffling or regeneration, while `ensure_playable` specifically regenerates a dead board. The generator also enforces that all six configured identities occur on a returned board, which is a concrete interpretation of FR-01.
 
 The implementation provides some separation requested by the deferred NFR-05 even though TODO 4 did not make the broader maintainability exercise part of prototype acceptance. Conversely, the automated suite focuses on domain behavior and non-visual processing. Exercise 1 identified GUI response timing, visible feedback, and close behavior as manual acceptance concerns rather than fully automated tkinter tests.
+
+### Responsibility → current code location
+
+- Board and tile management → constants, board types, `copy_board`, `has_legal_move`, `is_playable_board`, `generate_playable_board`, and board/refill members of `Game` in `match3.py`.
+- Move and rule processing → `in_bounds`, `are_adjacent`, `_swap`, `swap_creates_match`, and validation in `Game.attempt_swap` in `match3.py`.
+- Match detection → `find_matches` in `match3.py`.
+- Removal, refill, and cascading → `Game._resolve_cascades` and `Game._apply_gravity_and_refill` in `match3.py`.
+- Scoring → `POINTS_PER_TILE` and score-increment logic in `Game._resolve_cascades` in `match3.py`; the current score total is also stored in `Game`.
+- Game-state coordination → `Game.attempt_swap`, `Game.restart`, and `Game.ensure_playable` in `match3.py`; selection is currently stored in `Match3App.selected` in `main.py`.
+- User input → `Match3App.on_tile_click`, `Match3App.restart`, and the current `Match3App.busy` input lock in `main.py`.
+- Presentation → `TILE_STYLES`, `Match3App.render`, `Match3App._show_resolution_step`, and tkinter status/score widgets in `main.py`.
+
+## Prompt log
+
+```text
+Revise only the TODO 1 section of architecture.md. Do not change code.
+1. Derive the responsibilities from writeup.md and cite only requirement IDs in the table. Move the section "Current Implementation Observations" unchanged into a new section "Notes for TODO 6 (current code)" at the end of the file, and add there a short mapping "responsibility → current code location" built from the code references you remove from the table.
+2. Remove "Testing and validation" as a responsibility. Add a short list "Cross-cutting constraints": requirements that the whole architecture must satisfy rather than one responsibility (e.g. testability without a GUI, platform, Python version, dependencies), with their IDs.
+3. Give every piece of state and every decision exactly one owner:
+   - selection rules and the selected tile belong to game-state coordination (the Selected state of the Exercise 1 state machine), so they can be tested without a GUI; user input only turns clicks into requests;
+   - the scoring rule belongs to scoring; the score total belongs to game-state coordination, which also decides reset on restart and preservation on dead-board recovery;
+   - board content and its invariants belong to board management; coordination only decides when a new board replaces the current one;
+   - the input lock: name its single owner and the reason. ASSUMPTION unless writeup.md says otherwise: a move is resolved in one synchronous core call, so the lock is only needed while the GUI shows resolution steps and belongs to user input.
+4. Add a column "GUI-independent" (yes/no).
+5. State that the board invariant (full, match-free, at least one legal move) holds in every stable state waiting for input, not during resolution.
+6. Add a traceability list: every requirement ID in writeup.md → the responsibility or cross-cutting constraint that covers it, or "not covered"; mark deferred requirements as deferred.
+7. Mark every interpretation not stated in writeup.md with "ASSUMPTION:".
+Shorten the prose sections to what still applies. Append this prompt to the Prompt log (create the section at the end of the file if it is missing).
+```
