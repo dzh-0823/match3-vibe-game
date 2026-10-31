@@ -411,3 +411,260 @@ Together, this Must set provides a locally launchable and closable offline deskt
 - **Won't have for this prototype:** NFR-04's 1,000-scenario stress target is postponed. Targeted deterministic checks and the smaller performance benchmark provide proportionate first-prototype evidence; large-sample robustness testing can follow once the core behavior stabilizes.
 
 No other TODO 3 requirement is deferred. These deferrals do not remove traceability or cancel the underlying stakeholder needs; they only define what is necessary for the first implementation milestone.
+
+## TODO 5: Structural and Behavioral Models
+
+The following models describe the validated Must-have scope without selecting a programming language structure, algorithm, storage format, or GUI framework.
+
+### 1. Detailed use case: Play one match-3 move
+
+| Field | Description |
+| --- | --- |
+| Use case ID and name | **UC-01 — Play one match-3 move** |
+| Primary actor | Player |
+| Goal | Select two tiles, complete one legal match-producing swap, resolve all resulting matches and cascades, and return to a playable stable board with the correct score. |
+| Preconditions | The application is running; initialization or restart has completed; the board has 64 occupied cells, no existing match, and at least one legal move; the displayed score equals the current score; no cascade is being resolved; and board-changing input is enabled. |
+| Trigger | The player selects a first tile on the board. |
+
+#### Main success scenario
+
+1. The player selects a tile.
+2. The system stores its coordinate as the selected coordinate and visibly highlights the tile.
+3. The player selects a horizontally or vertically adjacent second tile.
+4. The system locks board-changing input while it validates and, if accepted, resolves the move.
+5. The system evaluates the tentative exchange and confirms that it creates at least one horizontal or vertical match of three or more identical tiles.
+6. The system commits the swap and detects every horizontal and vertical match currently on the board.
+7. The system combines all matched coordinates into one set, clears all coordinates in that set simultaneously, and adds 10 points per distinct cleared coordinate.
+8. The system moves remaining tiles downward within each column and refills every empty cell.
+9. The system detects matches on the refilled board. If another match exists, it repeats steps 7–9 as a cascade until no match remains.
+10. The system verifies that the stable board has at least one legal move.
+11. The system clears the selected coordinate, displays the stable board and updated score, unlocks board-changing input, and returns control to the player.
+
+#### Alternative and exception flows
+
+**A1 — Diagonal or non-adjacent second tile**
+
+1. At step 3, the player selects a diagonal or otherwise non-adjacent tile.
+2. The system rejects the attempt and visibly indicates the rejection.
+3. The board and score remain unchanged.
+4. After the feedback is shown, the system clears the selected coordinate and returns to the ready-for-input state.
+
+**A2 — Adjacent swap creates no match**
+
+1. At step 5, the tentative adjacent exchange creates no match.
+2. The system rejects the attempt and visibly indicates the rejection.
+3. The tentative exchange is not committed, so the board and score equal their values before the attempt.
+4. The system clears the selected coordinate, unlocks board-changing input, and returns to the ready-for-input state.
+
+**A3 — Long, simultaneous, or intersecting matches**
+
+1. At step 6, detection may find a run longer than three, multiple matches at once, or horizontal and vertical matches that intersect.
+2. Every coordinate in every qualifying run is added to the matched-coordinate set.
+3. A coordinate shared by multiple runs appears only once in the set.
+4. The system continues at step 7, clearing every set member simultaneously and scoring each distinct coordinate exactly once.
+
+**A4 — One or more cascades**
+
+1. At step 9, the refill creates one or more new matches.
+2. Board-changing input remains locked.
+3. The system repeats detection, set construction, simultaneous clearing, scoring, gravity, and refill for each cascade.
+4. When detection finds no match, the system continues at step 10.
+
+**A5 — Stable board has no legal move**
+
+1. At step 10, the system finds no legal move on the full, match-free board.
+2. The system keeps board-changing input locked and preserves the current score.
+3. The system reshuffles the existing tiles or regenerates the board.
+4. It rejects any recovery candidate that is not full, contains a match, or has no legal move, and repeats recovery as needed.
+5. When a valid recovery board exists, the system continues at step 11.
+
+**A6 — Restart during normal play**
+
+1. While the system is ready for input or has only the first tile selected, the player activates Restart.
+2. The system enters the restarting state, locks board-changing input, clears the selection, and resets the score to zero.
+3. The system creates a fresh full, match-free board with at least one legal move.
+4. The system displays the new board and zero score, unlocks input, and returns to the ready-for-input state.
+5. Restart is not accepted as a board-changing action while validation, cascade resolution, dead-board recovery, or another restart is in progress.
+
+**A7 — Close the application**
+
+1. From any non-terminated state, the player requests a normal close.
+2. The system stops accepting input and abandons any incomplete move or recovery work without saving game state.
+3. The process terminates cleanly within the required time and leaves no game process running.
+
+#### Postconditions
+
+- **Successful move:** The score includes all distinct tiles cleared by the initial match and cascades; the board is full, match-free, and has at least one legal move; no tile is selected; and input is enabled.
+- **Rejected attempt:** The board and score are unchanged; rejection feedback has been presented; no tile remains selected; and input is enabled.
+- **Restart:** The score is zero; a fresh board satisfies the playable-board invariant; no tile is selected; and input is enabled.
+- **Close:** The game process is terminated and no persistent player or game-state data has been created.
+
+#### Related Must-have requirements
+
+- **Functional:** FR-01 through FR-11.
+- **Product non-functional:** NFR-01, NFR-02, NFR-03, and NFR-13.
+- **Organizational non-functional:** NFR-07 and NFR-08.
+- **External non-functional:** NFR-09, NFR-10, and NFR-12.
+- **Domain-specific:** DR-01 through DR-06.
+
+### 2. Finite-state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initializing: launch / set score to 0
+
+    state "Starting / initializing" as Initializing
+    state "Ready for input" as Ready
+    state "First tile selected" as FirstSelected
+    state "Validating swap" as Validating
+    state "Rejecting invalid or matchless swap" as Rejecting
+    state "Detecting matches" as DetectingMatches
+    state "Clearing matches" as ClearingMatches
+    state "Applying gravity" as ApplyingGravity
+    state "Refilling" as Refilling
+    state "Checking for another cascade" as CheckingCascade
+    state "Checking legal moves" as CheckingMoves
+    state "Recovering from dead board" as Recovering
+    state "Restarting" as Restarting
+    state "Closing" as Closing
+    state "Terminated" as Terminated
+
+    Initializing --> CheckingMoves: full match-free candidate created
+    CheckingMoves --> Ready: [legal move exists] / clear selection; unlock input
+    CheckingMoves --> Recovering: [no legal move] / preserve score
+    Recovering --> CheckingMoves: reshuffle or regenerate full match-free candidate
+
+    Ready --> FirstSelected: tile click / store coordinate; highlight tile
+    FirstSelected --> Validating: second tile click / lock board-changing input
+    Validating --> Rejecting: [diagonal or non-adjacent] / show rejection
+    Validating --> Rejecting: [adjacent and no match] / discard tentative swap; show rejection
+    Validating --> DetectingMatches: [adjacent and creates match] / commit swap
+    Rejecting --> Ready: board and score unchanged / clear selection; unlock input
+
+    DetectingMatches --> ClearingMatches: [matched set not empty] / union all matched coordinates
+    DetectingMatches --> CheckingMoves: [matched set empty] / board is stable
+    ClearingMatches --> ApplyingGravity: clear set simultaneously / add 10 points per set member
+    ApplyingGravity --> Refilling: compact each column downward
+    Refilling --> CheckingCascade: fill every empty cell
+    CheckingCascade --> DetectingMatches: inspect refilled board
+
+    Ready --> Restarting: restart / lock input
+    FirstSelected --> Restarting: restart / clear selection; lock input
+    Restarting --> CheckingMoves: score = 0 / create full match-free candidate
+
+    Initializing --> Closing: close
+    Ready --> Closing: close
+    FirstSelected --> Closing: close
+    Validating --> Closing: close
+    Rejecting --> Closing: close
+    DetectingMatches --> Closing: close
+    ClearingMatches --> Closing: close
+    ApplyingGravity --> Closing: close
+    Refilling --> Closing: close
+    CheckingCascade --> Closing: close
+    CheckingMoves --> Closing: close
+    Recovering --> Closing: close
+    Restarting --> Closing: close
+    Closing --> Terminated: stop work; release resources; exit
+    Terminated --> [*]
+
+    note right of DetectingMatches
+        From validation through recovery,
+        tile clicks cannot change the board.
+    end note
+```
+
+#### Transition table
+
+| Current state | Event or condition | Next state | Main action | Related requirement IDs |
+| --- | --- | --- | --- | --- |
+| Not running | Launch | Starting / initializing | Set score to zero and create a full, match-free board candidate. | FR-01, NFR-09, NFR-10, DR-04 |
+| Starting / initializing | Candidate created | Checking legal moves | Evaluate whether at least one DR-01 move exists. | FR-01, DR-01, DR-04 |
+| Checking legal moves | Legal move exists | Ready for input | Clear selection and enable board-changing input. | FR-01, DR-04 |
+| Checking legal moves | No legal move exists | Recovering from dead board | Preserve score and begin reshuffle or regeneration. | FR-08, DR-05 |
+| Recovering from dead board | Full, match-free candidate produced | Checking legal moves | Recheck the candidate before exposing it to the player. | FR-08, NFR-03, DR-04, DR-05 |
+| Ready for input | Player selects a tile | First tile selected | Store and visibly highlight the selected coordinate. | FR-02, FR-09, NFR-01, NFR-02 |
+| First tile selected | Player selects a second tile | Validating swap | Lock board-changing input and evaluate adjacency and match creation. | FR-02, DR-01 |
+| Validating swap | Second coordinate is diagonal or non-adjacent | Rejecting invalid or matchless swap | Reject without changing board or score and show feedback. | FR-03, FR-09, DR-01 |
+| Validating swap | Adjacent swap creates no match | Rejecting invalid or matchless swap | Discard the tentative exchange, preserve score, and show feedback. | FR-04, FR-09, DR-01, DR-02 |
+| Rejecting invalid or matchless swap | Rejection feedback presented | Ready for input | Clear selection and unlock input. | FR-03, FR-04, FR-09 |
+| Validating swap | Adjacent swap creates a match | Detecting matches | Commit the swap and detect all qualifying runs. | FR-05, DR-01, DR-02 |
+| Detecting matches | Matched-coordinate set is not empty | Clearing matches | Retain the union of all horizontal and vertical matched coordinates. | FR-05, DR-02 |
+| Detecting matches | Matched-coordinate set is empty | Checking legal moves | Declare the full board stable and check continued playability. | FR-06, FR-08, DR-03, DR-04 |
+| Clearing matches | Matched set ready | Applying gravity | Clear all set members simultaneously and add 10 points for each. | FR-05, FR-07, DR-02, DR-03, DR-06 |
+| Applying gravity | Clearing and scoring complete | Refilling | Move remaining tiles down independently in each column. | FR-06, DR-03 |
+| Refilling | Gravity complete | Checking for another cascade | Fill all empty cells using the tile source. | FR-06, FR-11, DR-03 |
+| Checking for another cascade | Refilled board ready | Detecting matches | Search again while board-changing input remains locked. | FR-05, FR-06, NFR-03, DR-03 |
+| Ready for input or First tile selected | Player activates Restart | Restarting | Lock input, clear selection, and discard the current session state. | FR-10 |
+| Restarting | Restart processing begins | Checking legal moves | Set score to zero and create a fresh, full, match-free candidate. | FR-01, FR-10, DR-04 |
+| Validating through Recovering | Player clicks a board tile | Same state | Ignore or disable the board-changing input; do not alter board, score, or pending resolution. | FR-06, FR-08, DR-03, DR-04 |
+| Any non-terminated state | Player requests Close | Closing | Stop accepting input and cancel incomplete work without saving game state. | NFR-12, NFR-13 |
+| Closing | Resources released | Terminated | End the process without an uncaught exception or remaining game process. | NFR-13 |
+
+### 3. Conceptual match-resolution model
+
+```mermaid
+flowchart TD
+    A["Accepted adjacent swap creates a match"] --> B["Detect every horizontal and vertical run of at least three"]
+    B --> C["Union all run coordinates into the matched-coordinate set"]
+    C --> D{"Is the matched-coordinate set empty?"}
+    D -- No --> E["Clear every set member simultaneously"]
+    E --> F["Add 10 points times the number of distinct set members"]
+    F --> G["Apply downward gravity independently to each column"]
+    G --> H["Refill every empty cell"]
+    H --> B
+    D -- Yes --> I["Board is stable"]
+    I --> J{"Does at least one legal move remain?"}
+    J -- Yes --> K["Clear selection and enable player input"]
+    J -- No --> L["Reshuffle or regenerate while preserving score"]
+    L --> M{"Is the candidate full, match-free, and playable?"}
+    M -- No --> L
+    M -- Yes --> K
+    K --> N["Return the full, match-free board with at least one legal move"]
+```
+
+#### Conceptual data
+
+- **Board:** An 8 x 8 arrangement that associates each of 64 coordinates with one tile type. During clearing and refill it may temporarily contain empty coordinates, but it is never returned for player input in that condition.
+- **Tile type:** One of exactly six distinguishable categories. Identity, not display color alone, determines equality for matching.
+- **Coordinate:** A row-and-column location on the board. Orthogonal adjacency means a one-cell difference in exactly one axis.
+- **Selected coordinate:** Either no value or the coordinate of the first tile selected while awaiting a second selection. It is cleared after acceptance, rejection, restart, or recovery completion.
+- **Matched-coordinate set:** The union of coordinates belonging to every qualifying horizontal and vertical run in the current resolution step. Set membership ensures that an intersecting cell is cleared and scored once.
+- **Score:** A non-negative session value initialized to zero and increased by exactly 10 for each distinct cleared coordinate. Recovery preserves it; restart resets it.
+- **Game state:** The lifecycle and interaction state from the finite-state model. It determines when board-changing input may be accepted.
+- **Optional deterministic random source:** A test-controlled source of initial tiles, refill tiles, or seeds. Identical test inputs produce reproducible board sequences; normal play does not require this source to be exposed or persisted.
+
+#### Resolution sequence
+
+1. Starting from an accepted adjacent swap, inspect the whole board for every contiguous horizontal and vertical run containing at least three equal tile types.
+2. Add the coordinate of every tile in every run to one matched-coordinate set. Long and simultaneous runs contribute all their coordinates, while intersecting coordinates remain single set members.
+3. Clear every coordinate in the set as one conceptual operation so one match is not allowed to change detection of another match from the same step.
+4. Increase the score by exactly 10 multiplied by the number of coordinates in the set.
+5. For each column independently, move all remaining tiles toward the bottom while preserving their vertical order.
+6. Fill every empty coordinate with a tile supplied by the normal or deterministic tile source.
+7. Repeat whole-board detection. If a new matched-coordinate set is non-empty, repeat clearing, scoring, gravity, and refill while board-changing input remains locked.
+8. When detection returns an empty set, treat the board as stable; only then check for legal moves.
+9. If at least one legal move exists, clear any selection and enable player input.
+10. If no legal move exists, preserve the score and repeatedly reshuffle or regenerate candidate boards until a candidate is full, has no existing match, and has at least one legal move. Recovery candidates are validated without awarding points.
+11. Return control to the player only with a full, match-free board that has at least one legal move. At no point during steps 1–10 may a tile click change the board.
+
+This model defines observable transformations and invariants, not a scanning algorithm, collection implementation, random-number generator, or rendering technique.
+
+### 4. Model consistency and traceability
+
+| Model element | Covered behavior | Related Must-have requirement IDs |
+| --- | --- | --- |
+| UC-01 preconditions and initialization | Start with the baseline board, zero score, a supported local environment, and a playable ready state. | FR-01, NFR-09, NFR-10, DR-04 |
+| UC-01 steps 1–5 and alternatives A1–A2 | Mouse selection, orthogonal validation, safe rejection, visible feedback, and input response. | FR-02, FR-03, FR-04, FR-09, NFR-01, NFR-02, DR-01 |
+| UC-01 steps 6–9 and alternatives A3–A4 | Full match detection, distinct-cell clearing and scoring, gravity, refill, and cascades. | FR-05, FR-06, FR-07, NFR-03, DR-02, DR-03, DR-06 |
+| UC-01 steps 10–11 and alternative A5 | Stable-board validation and score-preserving dead-board recovery. | FR-08, NFR-03, DR-04, DR-05 |
+| UC-01 alternatives A6–A7 | Restart from normal play and clean close without persistent game state. | FR-10, NFR-12, NFR-13 |
+| Finite-state input lock | No board-changing click is accepted from swap validation through cascade resolution and recovery. | FR-06, FR-08, DR-03, DR-04 |
+| Finite-state initialization, restart, and lifecycle | Launch, fresh-board creation, restart, close, and termination. | FR-01, FR-10, NFR-09, NFR-10, NFR-13, DR-04 |
+| Finite-state validation and rejection branch | Legal versus illegal selection and matchless-swap outcomes. | FR-02, FR-03, FR-04, FR-09, DR-01, DR-02 |
+| Finite-state resolution loop | Detect, clear, score, apply gravity, refill, and detect again until stable. | FR-05, FR-06, FR-07, NFR-03, DR-02, DR-03, DR-06 |
+| Match-resolution flowchart and numbered sequence | Atomic match union, scoring, column gravity, refill, cascade loop, readiness invariant, and recovery. | FR-05, FR-06, FR-07, FR-08, NFR-03, DR-02, DR-03, DR-04, DR-05, DR-06 |
+| Conceptual data model | Board, tile identity, coordinates, selection, matched set, score, state, and controllable test data. | FR-01, FR-02, FR-07, FR-11, NFR-01, NFR-07, DR-01, DR-02, DR-04, DR-06 |
+| Model boundary | Documentation remains implementation-independent and excludes all deferred and out-of-scope product features. | NFR-06, NFR-08 |
+
+No contradiction was found between the models, the Must-have scope, and TODO 1's prototype baseline. One interaction detail was previously underspecified: the state of the first selection after an invalid or matchless second selection. UC-01 and the state machine resolve it by showing rejection feedback, clearing the selection, and returning to ready for input with the board and score unchanged. This choice is consistent with FR-03, FR-04, FR-09, and TODO 4's validated interpretation. Restart is accepted only during normal play states because it changes the board; Close remains available from every non-terminated state so NFR-13 can be satisfied.
