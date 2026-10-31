@@ -668,3 +668,68 @@ This model defines observable transformations and invariants, not a scanning alg
 | Model boundary | Documentation remains implementation-independent and excludes all deferred and out-of-scope product features. | NFR-06, NFR-08 |
 
 No contradiction was found between the models, the Must-have scope, and TODO 1's prototype baseline. One interaction detail was previously underspecified: the state of the first selection after an invalid or matchless second selection. UC-01 and the state machine resolve it by showing rejection feedback, clearing the selection, and returning to ready for input with the board and score unchanged. This choice is consistent with FR-03, FR-04, FR-09, and TODO 4's validated interpretation. Restart is accepted only during normal play states because it changes the board; Close remains available from every non-terminated state so NFR-13 can be satisfied.
+
+## TODO 6: Generate the First Prototype
+
+### 1. Implementation approach
+
+The prototype uses only Python 3.13 standard-library modules. `match3.py` owns the board representation, generation, move validation, whole-board match detection, distinct-cell scoring, gravity, deterministic or random refill, cascade resolution, restart, and dead-board recovery. It has no dependency on `tkinter`, so controlled boards, seeds, and refill sequences can be exercised without opening a window.
+
+`main.py` is a thin `tkinter` view/controller. Each tile is a mouse-operated button identified by both a color and a letter. The controller tracks the first selection, visibly highlights it, reports accepted and rejected attempts, refreshes the score after each resolution step through a GUI-neutral observer, and disables both tile and Restart controls while a move or restart is being processed. Logic returns control only after the board is full, stable, and playable. Dead boards are regenerated while the current score is preserved.
+
+Board generation fills cells while preventing immediate three-tile runs, then accepts only candidates that contain all six configured tile identities and at least one legal move. Random generation has a bounded candidate count and a validated deterministic fallback. Tests inject fixed `random.Random` instances, predefined boards, and predefined refill sequences for repeatable scenarios.
+
+### 2. File structure
+
+| Path | Responsibility |
+| --- | --- |
+| `main.py` | Python 3.13 runtime check, `tkinter` GUI, mouse interaction, feedback, input lock, and application entry point. |
+| `match3.py` | GUI-independent board and game logic plus centralized board, tile, and scoring constants. |
+| `tests/test_match3.py` | Standard-library `unittest` coverage for generation, moves, matches, scoring, cascades, recovery, restart, determinism, and performance bounds. |
+| `tests/__init__.py` | Test package marker. |
+| `README.md` | Supported environment, gameplay summary, and exact run/test/syntax commands. |
+| `.gitignore` | Excludes IDE data, virtual environments, bytecode, caches, build output, and common generated files. |
+
+### 3. Run and test instructions
+
+The verified reference combination is Windows 11 with Python 3.13 and its bundled `tkinter`. No network, account, elevated privilege, external asset, or third-party package is needed.
+
+From the project root in PowerShell, launch the GUI with:
+
+```powershell
+py -3.13 main.py
+```
+
+Run all automated tests with:
+
+```powershell
+py -3.13 -m unittest discover -s tests -v
+```
+
+Check syntax without launching the GUI with:
+
+```powershell
+py -3.13 -m compileall -q main.py match3.py tests
+```
+
+### 4. Must-requirement-to-implementation traceability
+
+| Must requirement(s) | Implementation and verification evidence |
+| --- | --- |
+| UR-01, FR-02, DR-01 | `Match3App.on_tile_click` implements two-click mouse selection; `Game.attempt_swap` accepts only in-bounds orthogonally adjacent, match-producing swaps. Move tests cover all rejection classes and a legal swap. |
+| UR-02, FR-04–FR-07, DR-02, DR-03, DR-06 | `find_matches` unions every horizontal and vertical run; `_resolve_cascades` clears the union, adds 10 points per cell, applies gravity/refill, and repeats. Tests cover long, intersecting, single-step, two-step, and ten-step outcomes. |
+| UR-03, FR-09, NFR-01 | Six GUI styles pair distinct colors with letters A–F. Selected tiles use a persistent sunken border; status text and color distinguish accepted and rejected attempts. |
+| UR-04, FR-07, FR-10 | The score label displays `Game.score`; a resolution observer refreshes it after every cascade step; Restart calls `Game.restart`, resetting score to zero and generating a new validated board. |
+| UR-05, FR-08, DR-04, DR-05 | `ensure_playable` detects a stable dead board and regenerates it without changing score. It is called after every accepted move; deterministic dead-board tests verify continuity. |
+| UR-06, NFR-06, NFR-09, NFR-10, NFR-12 | README and this section document Windows 11, Python 3.13, exact commands, standard-library-only offline operation, and no persistent game data. |
+| UR-07, FR-11, NFR-07 | `Game` accepts a seeded random source, predefined board, and refill iterable. `unittest` scenarios reproduce initialization, valid/invalid swaps, long/intersecting matches, cascades, scoring, recovery, and restart. |
+| UR-09, NFR-02, NFR-03 | Selection/rejection feedback is rendered directly in the mouse handler. Timed tests exercise 100 generation seeds, 10 dead-board recoveries, and a controlled ten-step cascade with a two-second bound. |
+| FR-01 | `generate_playable_board` returns an 8 x 8 board using the six configured tile types, with no match and at least one legal move; generation tests validate the invariant and deterministic seed behavior. |
+| FR-03 | Bounds and orthogonal adjacency checks reject invalid, diagonal, same-cell, and non-adjacent coordinates before mutation; automated tests compare board and score snapshots. |
+| FR-06, FR-08, DR-03, DR-04 input lock | `Match3App.busy` ignores clicks, disables all tiles, and disables Restart during synchronous resolution/recovery. Controls are restored only after the core returns a ready board. |
+| NFR-13 | The GUI uses the normal `tkinter` main loop and creates no worker or background process; closing the root ends the process directly. |
+| NFR-08 | The implementation contains only the validated first-prototype loop and its internal verification support; no TODO 1 out-of-scope product feature was added. |
+
+### 5. Known limitations or remaining mismatches
+
+No known mismatch remains against the validated Must requirements. Automated checks cover the core logic and documented processing thresholds, while the OS-level GUI observations in FR-09, NFR-01, NFR-02, and NFR-13 still require the short manual acceptance checks listed in the delivery report. The deferred TODO 4 requirements (UR-08, NFR-04, NFR-05, and NFR-11) were not expanded into additional prototype features.
