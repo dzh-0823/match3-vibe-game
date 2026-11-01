@@ -226,12 +226,12 @@ The operations below are conceptual capabilities, not Python method definitions.
 ### Player-Move Information Flow
 
 1. **First tile click:** `DesktopUIAdapter` converts the event to a `Coordinate` and calls `GameCoordinator`. Coordination stores the selected coordinate and returns an `InteractionResult` with a selected reason code and immutable `SessionSnapshot`. The adapter renders the highlight.
-2. **Second adjacent tile click:** `DesktopUIAdapter` acquires its GUI input lock and sends the second `Coordinate`. `GameCoordinator` asks `RuleEngine` for bounds, adjacency, and match-producing-swap decisions using a `BoardSnapshot` from `BoardManager`.
-3. **Rejected move:** If a selection is invalid, non-adjacent, or matchless, `GameCoordinator` clears the selected coordinate, preserves board and score, and returns a rejection reason plus unchanged domain state. `DesktopUIAdapter` maps the code to wording and renders it.
+2. **Second adjacent tile click:** `DesktopUIAdapter` sends the second `Coordinate` while its GUI input lock remains clear. The synchronous `GameCoordinator` call completes before any presentation lock is acquired. `GameCoordinator` asks `RuleEngine` for bounds, adjacency, and match-producing-swap decisions using a `BoardSnapshot` from `BoardManager`.
+3. **Rejected move:** If a selection is invalid, non-adjacent, or matchless, `GameCoordinator` clears the selected coordinate, preserves the board and accumulated score, and returns a rejection reason with a `SessionSnapshot` whose selected coordinate is `None`. `DesktopUIAdapter` maps the code to wording and renders it without acquiring the presentation lock.
 4. **Accepted move with cascades:** `GameCoordinator` directs `BoardManager` to install the accepted swap and passes the initial `MatchSet` from `RuleEngine` to `CascadeResolver`. The resolver clears, applies gravity, refills through `BoardManager`, queries `RuleEngine` again, and uses `ScoreRules` for each increment until no match remains. It returns ordered immutable steps and a total increment.
 5. **Score update:** `CascadeResolver` never changes the session total. `GameCoordinator` applies the returned total increment to its accumulated score and includes the authoritative final total in the resulting `SessionSnapshot`.
 6. **Dead-board recovery:** `GameCoordinator` asks `BoardManager` to evaluate the stable invariant. If no legal move remains, coordination preserves its score and directs `BoardManager` to generate and install a playable replacement, then records recovery in the interaction result.
-7. **Final rendering and unlock:** `DesktopUIAdapter` renders ordered `ResolutionStep` data, recovery feedback, and the final `SessionSnapshot`, then releases its GUI input lock. Core results contain only domain data and reason codes; the adapter owns all displayed wording and widgets.
+7. **Final rendering and unlock:** After an accepted `InteractionResult` has returned, `DesktopUIAdapter` acquires its own GUI input lock, presents the ordered `ResolutionStep` values, recovery feedback, and the final authoritative `SessionSnapshot`, then releases the lock. Rejected results require no presentation lock. Core results contain only domain data and reason codes; the adapter owns all displayed wording and widgets.
 
 This is an interface-level flow only; detailed alternatives and timing belong to TODO 5.
 
@@ -603,7 +603,7 @@ The current implementation already provides a sound migration base: `match3.py` 
 
 The explicit lifecycle states such as Validating, Detecting Matches, Refilling, and Recovering come from the **Exercise 1 TODO 5 finite-state model**, not from Exercise 2 TODO 5. The current code does not implement a state enum; synchronous `Game` calls plus `Match3App.selected` and `Match3App.busy` reproduce the required observable flow.
 
-Exercise 1 records that 16 `unittest` tests passed and that the GUI was manually accepted. On 2026-11-01, the project `.venv` was changed to Python 3.14.3 based on `C:\Python314` because the earlier Windows Store interpreter was unavailable. The required `unittest` command was rerun and reported `Ran 16 tests in 0.037s` and `OK` with exit code 0. The `compileall` command also completed with exit code 0 and no output. A separate runtime-alignment change then replaced the legacy exact-version guard with a Python 3.14 minimum-version guard. GUI acceptance under Python 3.14 remains pending.
+Exercise 1 records that 16 `unittest` tests passed and that the GUI was manually accepted. On 2026-11-01, the project `.venv` was changed to Python 3.14.3 based on `C:\Python314` because the earlier Windows Store interpreter was unavailable. The required `unittest` command was rerun and reported `Ran 16 tests in 0.037s` and `OK` with exit code 0. The `compileall` command also completed with exit code 0 and no output. A separate runtime-alignment change then replaced the legacy exact-version guard with a Python 3.14 minimum-version guard. Under Python 3.14, GUI launch, board rendering, one accepted move, cascade presentation, and score update were manually observed. The remaining complete GUI checklist items, including rejected moves, Restart, input-lock behavior, recovery, and clean close, remain pending.
 
 ### 2. Current-to-Target Gap Analysis
 
@@ -693,8 +693,8 @@ Separate review and commits are appropriate after each passing stage, but this p
 | Immutable contracts | Frozen `MoveResult` exists, and `copy_board` tests indirectly compare copies, but callers can still receive mutable lists. | **Proposed:** mutation attempts fail for frozen/tuple contracts; modifying a supplied board after installation and modifying a compatibility copy cannot alter `BoardManager`; result steps remain ordered and immutable. |
 | Tile-provider boundary | Existing seeded generation and supplied `refill_tiles` tests prove reproducibility. | **Proposed:** inject two providers yielding the same sequence and assert identical snapshots; assert invalid identities fail clearly; preserve documented fallback after finite sequence exhaustion. |
 | Core/GUI dependency boundary | All current automated tests import `match3.py` without opening tkinter; `match3.py` currently has no tkinter import. | **Proposed:** import `match3` in a clean process and inspect that it imports no tkinter module; static review confirms no core reference to `DesktopUIAdapter`. |
-| `DesktopUIAdapter` | No automated tkinter test exists. Exercise 1 records manual checks for valid/invalid swaps, score, cascades, restart, and continued play. | **Proposed manual:** verify colors plus symbols, selection highlight, rejection feedback, ordered accepted steps, lock only during accepted-step presentation, final score/board, restart, recovery feedback, and no interaction corruption. |
-| `ApplicationStartup` | `main.main` now accepts Python 3.14 or newer, creates the root, runs `mainloop`, and relies on normal tkinter close. | **Proposed:** retain the aligned guard; manually launch and close on Python 3.14, confirm no remaining process or persistent game data, and keep this GUI recheck pending until recorded. |
+| `DesktopUIAdapter` | No automated tkinter test exists. Exercise 1 records manual checks for valid/invalid swaps, score, cascades, restart, and continued play. Under Python 3.14, board rendering, one accepted move, cascade presentation, and score update were manually observed. | **Proposed manual:** complete the remaining Python 3.14 checks for colors plus symbols, selection highlight, rejected moves and feedback, lock only during accepted-step presentation, restart, recovery feedback, and no interaction corruption. |
+| `ApplicationStartup` | `main.main` now accepts Python 3.14 or newer, creates the root, runs `mainloop`, and relies on normal tkinter close. GUI launch under Python 3.14 was manually observed. | **Proposed:** retain the aligned guard; manually verify clean close on Python 3.14, including no remaining process or persistent game data. |
 
 Tests should be moved or renamed only when the component API they exercise changes. Existing assertions must remain as regression evidence; migration is not a reason to weaken them. Proposed tests are not claimed to exist.
 
@@ -728,7 +728,67 @@ Sample handoff prompt for Stage 1 only:
 - [x] No networking, persistence, special tile, level, animation framework, plug-in system, or other out-of-scope product feature is introduced.
 - [x] The nine stages are small enough for separate review and commits and preserve behavior at every boundary.
 - [x] Unresolved compatibility lifetime, presentation scheduling, and private readiness representation are identified explicitly rather than guessed.
-- [x] The local Python 3.14 virtual environment is available, the automated baseline passes, and the startup guard is aligned to accept Python 3.14 or newer; the architecture is ready for staged implementation. Manual GUI acceptance under Python 3.14 remains pending.
+- [x] The local Python 3.14 virtual environment is available, the automated baseline passes, and the startup guard is aligned to accept Python 3.14 or newer; the architecture is ready for staged implementation. GUI launch, board rendering, one accepted move, cascade presentation, and score update were manually observed under Python 3.14; rejected moves, Restart, input-lock behavior, recovery, and clean close remain pending.
+
+## TODO 7: Architecture Workflow Reflection
+
+### 1. Workflow Summary
+
+I began this architecture exercise from the validated Exercise 1 requirements rather than from a preferred design or the shape of the existing code. I first grouped the Must requirements into responsibilities for board management, move rules, match detection, cascade processing, scoring, coordination, input, and presentation. I then converted those responsibilities into named components, specified the values and operations that cross their boundaries, fixed an acyclic dependency direction, compared candidate architectural styles, and selected a modular component-based architecture with one-way dependency layering and `ApplicationStartup` as the composition root. The structural and interaction models made ownership and runtime flow visible, and TODO 6 translated the target architecture into a behavior-preserving migration plan for the already working prototype.
+
+This was iterative rather than one successful prompt. The Prompt log shows repeated narrowing and correction: current-code evidence was separated from requirements-derived architecture; an initial ten-component proposal was reduced to seven fixed components; ownership rules were tightened; the diagrams were corrected for temporary empty cells, selection clearing, and presentation-lock timing; and the implementation plan was updated after the runtime moved to Python 3.14. The useful architecture emerged through small reviews that treated earlier output as a draft to test, not as an answer to accept automatically.
+
+### 2. Where the Coding Agent Helped
+
+The coding agent was strongest when it had to organize a large, traceable body of information. It converted the requirement IDs into a responsibility table with explicit purpose, ownership, exclusions, GUI independence, and evidence. That structure made omissions visible: for example, it became possible to check whether FR-08 appeared both in the responsibility row and in traceability, or whether the scoring formula and score total had accidentally been assigned to the same owner.
+
+Once the seven names were fixed, the agent carried `BoardManager`, `RuleEngine`, `ScoreRules`, `CascadeResolver`, `GameCoordinator`, `DesktopUIAdapter`, and `ApplicationStartup` across later tables and diagrams. It produced concise interface tables, the caller/dependency/reverse-dependency rationale, and coupling controls such as forbidding shared mutable board lists and tkinter imports in the core. The Mermaid component, class, and sequence models then exposed relationships that were harder to see in prose, including the distinction between `RuleEngine` detecting a `MatchSet` and `CascadeResolver` sequencing clear, gravity, refill, and repeat.
+
+The pattern comparison was also useful because it made trade-offs explicit rather than merely naming a fashionable pattern. Layering was retained as a dependency rule, modular components were selected as the primary style, and a system-wide event-driven design was rejected as unnecessary for a synchronous local prototype. Finally, the agent turned the architecture into a current-to-target gap table, concrete immutable-contract choices, verification mapping, and nine small migration stages instead of proposing a rewrite. It was also fast at applying focused feedback: changes such as reducing the component count or correcting sequence timing could be propagated through the relevant section with a reviewable diff.
+
+### 3. Limitations, Mistakes, and Human Corrections
+
+| Architecture activity | Agent contribution | Risk or mistake observed | Human correction | Lesson |
+| --- | --- | --- | --- | --- |
+| Responsibility identification | Produced an initial responsibility table and connected it to the repository. | The first table mixed requirements-derived architecture with references to current functions and fields, allowing the implementation to bias the target design. | The review required requirement IDs only in TODO 1 and moved current-code observations to a separate later section. | Derive target responsibilities from validated requirements; use current code as gap evidence, not as the source of the architecture. |
+| Component decomposition | Expanded responsibilities into explicit components. | The first ten-component decomposition was internally consistent but too fine-grained for this prototype. | Human review fixed seven names, merging move and match rules into `RuleEngine`, merging GUI input/presentation into `DesktopUIAdapter`, and treating the tile provider as a `BoardManager` dependency. | Internal consistency is not enough; granularity must also satisfy KISS and the actual scale of the system. |
+| State and decision ownership | Identified candidate owners and boundaries. | Selection, accumulated score, board content, and the GUI lock initially needed sharper separation. | Selection and score total were assigned to `GameCoordinator`; the scoring formula to `ScoreRules`; board/provider state to `BoardManager`; and the presentation lock to `DesktopUIAdapter` under the synchronous-call assumption. | Every mutable state item and decision needs one authoritative owner and an explicit list of responsibilities it must not absorb. |
+| Domain structural model | Generated a compact class diagram with multiplicities. | The first model implied that `Board` and `BoardSnapshot` always contained exactly 64 occupied tile identities, which is false between clear and refill. | The model was changed to 64 positions with `0..64` occupied values during resolution and exactly 64 occupied positions only in a stable input-ready state. | Structural models must represent transitional states, not only the stable happy path. |
+| Move interaction models | Produced rejection and acceptance branches across two five-participant sequence diagrams. | Selection clearing appeared only in rejection branches, rejected snapshots were described too broadly as unchanged, and the GUI lock was acquired before the synchronous core call. | The coordinator now clears selection once for every completed second-tile attempt; rejection preserves board and score rather than the whole session snapshot; the adapter locks only while presenting returned accepted steps. | Sequence diagrams are executable claims about timing and ownership and require the same precision as interfaces. |
+| Runtime alignment | Helped diagnose commands, update documentation, align the startup guard, and rerun verification. | The unavailable Windows Store runtime was an environment change, not an architectural error. Moving deliberately to Python 3.14 then exposed a real documentation/code mismatch because the startup guard still required the earlier exact version. | The runtime was changed to the project Python 3.14.3 virtual environment, commands and documents were aligned, the guard became a minimum-version check, and 16 tests plus compilation passed. GUI launch, board rendering, one accepted move, cascade presentation, and score update were manually observed under Python 3.14; rejected moves, Restart, input-lock behavior, recovery, and clean close remain pending. | Environment facts must be checked directly; later runtime decisions must be propagated through code, documentation, and acceptance evidence without being misclassified as design failures. |
+| Completion and verification | Supplied concise summaries of edits and checks. | A confident “Done” summary could be mistaken for proof even when a Mermaid parser, a diff, an interpreter, or the GUI had not been checked. | Human review required section hashes, Mermaid/IDE checks, `git diff --check`, status inspection, actual unit/compile runs, and explicit manual acceptance status. | Completion language is useful coordination, but acceptance must rest on reproducible evidence. |
+
+### 4. How Prompt Quality Changed the Result
+
+The prompts improved when they named an authoritative source and constrained one decision at a time. Telling the agent to derive TODO 1 from `writeup.md`, cite requirement IDs, and keep current-code observations separate prevented implementation-driven design. Fixing the seven component names created a stable vocabulary that later interfaces, diagrams, and plans could reuse. Requiring one owner for every state and rule, along with “owns” and “must not own” boundaries, made conflicts around board content, selection, score, and input locking visible.
+
+Other useful prompt constraints were equally concrete: no tkinter in GUI-independent components; assumptions marked explicitly; genuine open questions kept separate; exact table columns; named Mermaid diagrams and scenarios; participant limits; prohibited code changes; no pattern selection before TODO 4; and exact validation and Git-status commands. These constraints reduced accidental edits and made review objective. A reviewer could ask whether every required row existed, whether a dependency edge was reversed, or whether only the authorized section changed.
+
+There is also a downside. A broad prompt can cause scope drift, mix current implementation with target architecture, or encourage the agent to fill ambiguity with invented detail. An overly prescriptive prompt can do the opposite: freeze a premature interface, create unnecessary components, or force time into an exact runtime assumption that does not improve the design. A long document may appear internally consistent while repeating the same bad assumption. I found that the best prompts fixed evidence, scope, vocabulary, ownership, and acceptance criteria while leaving genuine design choices open until the appropriate TODO.
+
+### 5. Architectural Lessons Learned
+
+The main lesson is to derive architecture from validated behavior and quality constraints, then compare it with existing code separately. Logical components are ownership boundaries, not a demand for seven files or classes. A small prototype can keep several components in `match3.py` and still preserve the rule that board state, session state, GUI state, and stateless policies each have one owner.
+
+Dependency direction must be explicit and acyclic. Keeping tkinter at `DesktopUIAdapter` and construction at `ApplicationStartup` protects GUI-independent testing. Separating `RuleEngine` match detection from `CascadeResolver` sequencing prevents a stateless rule service from becoming a workflow controller. Immutable snapshots and result records prevent callers from acquiring hidden ownership of another component's mutable state.
+
+The models also taught me to distinguish a stable invariant from temporary resolution state. A ready board is full, match-free, and playable, but a board being cleared may contain empty cells and may not yet satisfy that invariant. Finally, architecture becomes useful to implementation when it produces small behavior-preserving stages with completion evidence. The target is not a dramatic rewrite; it is a sequence of ownership and boundary improvements protected by existing behavior.
+
+### 6. Final Assessment
+
+Vibe coding was effective here for rapid decomposition, traceability, consistency checking, documentation, modeling, and revision. The agent could preserve terminology across a long artifact and regenerate focused tables or diagrams quickly after review. It could not replace human decisions about appropriate granularity, authoritative ownership, KISS trade-offs, the truth of environment assumptions, or what evidence was sufficient for acceptance. Its best role was as a fast architecture drafting and checking partner whose output remained subject to deliberate review.
+
+For future LLM-assisted architecture work, I would use this checklist:
+
+- [ ] Start from validated requirements and explicitly named authoritative inputs.
+- [ ] Give every mutable state, rule, and workflow decision one owner.
+- [ ] Fix a shared vocabulary before generating later artifacts.
+- [ ] Mark assumptions and preserve genuine open questions.
+- [ ] Separate current-implementation evidence from the target design.
+- [ ] Use small prompts with narrow, reviewable file and section scope.
+- [ ] Review diffs, ownership boundaries, and dependency direction after every revision.
+- [ ] Require automated checks and the applicable manual acceptance evidence.
+- [ ] Never accept “Done” without verifying the artifacts and observable result.
 
 ## Prompt log
 
@@ -1688,4 +1748,203 @@ git diff --stat
 git status --short
 
 Report exact results. Do not commit.
+```
+
+### TODO 7 prompt
+
+```text
+Complete only TODO 7 in exercise02_architecture.md.
+
+Read:
+
+- writeup.md, especially the validated requirements and the Exercise 1 reflection;
+- TODO 1–6 of exercise02_architecture.md;
+- the complete Prompt log;
+- the recent Git history and current repository state as read-only evidence.
+
+Insert the new section immediately after TODO 6 and before the Prompt log:
+
+## TODO 7: Architecture Workflow Reflection
+
+Do not modify TODO 1–6, README.md, writeup.md, Python source, or tests.
+
+Write a concise but substantive first-person reflection grounded in the actual
+workflow. Do not produce a generic description of LLM advantages.
+
+Include these subsections.
+
+### 1. Workflow Summary
+
+Briefly explain how the work progressed from validated Exercise 1 requirements
+through:
+
+- responsibility identification;
+- component decomposition;
+- interfaces and dependencies;
+- architectural-pattern selection;
+- structural and interaction models;
+- the architecture-guided implementation plan.
+
+Explain that the process was iterative rather than a single successful prompt.
+
+### 2. Where the Coding Agent Helped
+
+Discuss concrete strengths demonstrated in this exercise:
+
+- organizing many requirements into responsibilities;
+- producing traceability tables and boundary descriptions;
+- maintaining fixed component names across later sections;
+- generating interface/dependency tables and Mermaid models;
+- comparing architectural patterns;
+- turning the architecture into an incremental implementation plan;
+- quickly revising documentation after focused review feedback.
+
+Use examples from the actual document rather than hypothetical claims.
+
+### 3. Limitations, Mistakes, and Human Corrections
+
+Add a compact table with these columns:
+
+- Architecture activity
+- Agent contribution
+- Risk or mistake observed
+- Human correction
+- Lesson
+
+Cover at least:
+
+1. The first responsibility table mixed requirements-derived architecture with
+   current-code references.
+2. The initial ten-component decomposition was too fine-grained and was reduced
+   to the seven fixed components.
+3. State ownership initially needed correction for selection, accumulated score,
+   board content, and the GUI input lock.
+4. The first TODO 5 model incorrectly implied that all 64 positions were always
+   occupied during cascade resolution.
+5. Selection clearing and GUI input-lock timing were initially inconsistent
+   across the sequence diagrams.
+6. The Python 3.13 Windows Store environment problem led to a deliberate Python
+   3.14 runtime update, which exposed a documentation/code mismatch in the
+   startup guard and required tests plus manual GUI verification.
+7. Agent completion summaries were useful status reports but were not evidence
+   until diffs, tests, diagrams, and the running GUI were checked.
+
+Be precise and fair: distinguish an agent error from a deliberate later design
+or environment change.
+
+### 4. How Prompt Quality Changed the Result
+
+Explain how the prompts became more effective when they specified:
+
+- authoritative source documents;
+- exact files allowed to change;
+- fixed component names;
+- one owner for every state and decision;
+- “must own” and “must not own” boundaries;
+- GUI-independent constraints;
+- required assumptions and open questions;
+- exact tables, diagrams, and scenarios;
+- prohibited work such as code changes or premature pattern selection;
+- validation commands and Git-status checks.
+
+Also discuss the downside of overly broad or overly prescriptive prompts:
+scope drift, unnecessary detail, premature implementation choices, or a result
+that appears internally consistent while encoding a bad assumption.
+
+### 5. Architectural Lessons Learned
+
+Summarize the main software-architecture lessons from this exercise:
+
+- derive architecture from validated requirements rather than existing code;
+- separate logical components from physical files;
+- give every mutable state and rule one owner;
+- keep dependency direction explicit and acyclic;
+- separate match detection from cascade orchestration;
+- use immutable contracts across boundaries;
+- keep tkinter at the outer adapter;
+- model temporary resolution states separately from stable invariants;
+- use architecture to produce small implementation stages rather than a rewrite.
+
+### 6. Final Assessment
+
+Conclude with a balanced assessment of vibe coding for architectural design.
+
+State that the coding agent was effective for rapid decomposition, consistency
+checking, documentation, and revision, but could not replace human decisions
+about scope, ownership, trade-offs, environment facts, or acceptance evidence.
+
+End with a short reusable checklist for future LLM-assisted architecture work.
+The checklist should emphasize:
+
+- validated inputs;
+- explicit ownership;
+- fixed vocabulary;
+- assumptions marked;
+- current implementation separated from target design;
+- small reviewable prompts;
+- diff and dependency review;
+- automated and manual evidence;
+- no acceptance of “Done” without verification.
+
+Do not introduce new requirements, components, dependencies, architectural
+patterns, or implementation stages. Do not rewrite or summarize the entire
+architecture.
+
+Append this exact prompt to the Prompt log.
+
+Run:
+
+git diff --check
+git status --short
+
+Confirm that only exercise02_architecture.md changed.
+Do not commit.
+```
+
+### Final consistency-correction prompt
+
+```text
+Make one final consistency correction in exercise02_architecture.md only.
+Do not change Python source, tests, README.md, or writeup.md.
+
+1. In TODO 3, under "Player-Move Information Flow":
+
+- Correct step 2 so DesktopUIAdapter sends the second Coordinate while its
+  GUI input lock remains clear. The synchronous GameCoordinator call must
+  complete before any presentation lock is acquired.
+
+- Correct step 3 so a rejected result is described as preserving the board
+  and accumulated score, while returning a SessionSnapshot whose selected
+  coordinate is None. Do not describe the whole domain/session state as
+  unchanged.
+
+- Correct step 7 if necessary so the sequence is explicit:
+  after an accepted InteractionResult has returned, DesktopUIAdapter acquires
+  its own input lock, presents the ordered ResolutionStep values and final
+  SessionSnapshot, then releases the lock. Rejected results require no lock.
+
+Keep this flow consistent with TODO 5 and TODO 7.
+
+2. Correct the Python 3.14 manual-evidence wording in TODO 6 and the runtime
+alignment row in TODO 7:
+
+- record that GUI launch, board rendering, one accepted move, cascade
+  presentation, and score update were manually observed under Python 3.14;
+- state that any remaining items in the complete manual GUI checklist,
+  such as rejected moves, Restart, input-lock behavior, recovery, and clean
+  close, remain pending unless separately confirmed;
+- do not claim that unobserved checks passed.
+
+3. Make no other architectural changes and do not rewrite the reflection.
+
+4. Append this exact prompt to the Prompt log.
+
+Run:
+
+git diff --check
+git diff --stat
+git status --short
+
+Confirm that only exercise02_architecture.md changed.
+Do not commit.
 ```
