@@ -340,6 +340,251 @@ These costs are controlled by keeping the component set fixed at seven, avoiding
 
 No diagram or physical refactor is introduced in TODO 4.
 
+## TODO 5: Structural and Interaction Models
+
+**ASSUMPTION:** The model notation, message grouping, and containment multiplicities below are conceptual views of the contracts and interfaces fixed in TODO 3. They do not add runtime behavior or implementation classes beyond the validated requirements and prior architecture decisions.
+
+### Component Diagram
+
+```mermaid
+flowchart TD
+    subgraph Composition[Composition and lifecycle]
+        Startup[ApplicationStartup]
+    end
+
+    subgraph GUI[GUI adapter]
+        UI[DesktopUIAdapter]
+    end
+
+    subgraph Coordination[Application coordination]
+        Coordinator[GameCoordinator]
+    end
+
+    subgraph Domain[Domain state and services]
+        Board[BoardManager]
+        Rules[RuleEngine]
+        Cascades[CascadeResolver]
+        Scoring[ScoreRules]
+    end
+
+    Startup -.-> UI
+    Startup -.-> Coordinator
+    Startup -.-> Board
+    Startup -.-> Rules
+    Startup -.-> Cascades
+    Startup -.-> Scoring
+
+    UI --> Coordinator
+    Coordinator --> Board
+    Coordinator --> Rules
+    Coordinator --> Cascades
+    Board --> Rules
+    Cascades --> Board
+    Cascades --> Rules
+    Cascades --> Scoring
+```
+
+Legend: `-.->` means construction and wiring by `ApplicationStartup`; `-->` means a runtime dependency. The solid edges reproduce the acyclic TODO 3 dependency table. Dashed construction edges do not authorize `ApplicationStartup` to make gameplay decisions, and no reverse edge is implied.
+
+### Domain Structural Model
+
+```mermaid
+classDiagram
+    direction TB
+
+    class GameCoordinator {
+        <<component>>
+    }
+    class BoardManager {
+        <<component>>
+        tileProviderState
+    }
+    class SessionState {
+        <<authoritative_mutable>>
+        selectedCoordinateOrNone
+        accumulatedScore
+        lifecycleReadinessState
+    }
+    class Board {
+        <<authoritative_mutable>>
+        tileGridOf64Positions
+    }
+    class TileIdentity {
+        <<value>>
+        identity
+    }
+    class Coordinate {
+        <<immutable_value>>
+        row
+        column
+    }
+    class BoardSnapshot {
+        <<immutable_copy>>
+        copiedGridOf64Positions
+    }
+    class SessionSnapshot {
+        <<immutable_contract>>
+        copiedScore
+        copiedSelection
+        readinessState
+    }
+    class InteractionResult {
+        <<immutable_contract>>
+        recoveryIndicator
+    }
+    class ResolutionResult {
+        <<immutable_contract>>
+        totalScoreIncrement
+    }
+    class ResolutionStep {
+        <<immutable_contract>>
+        scoreIncrement
+    }
+    class MatchSet {
+        <<immutable_contract>>
+        distinctCoordinates
+    }
+    class ResultReason {
+        <<enumeration>>
+    }
+
+    GameCoordinator "1" *-- "1" SessionState : owns
+    BoardManager "1" *-- "1" Board : owns
+    Board "1" *-- "0..64" TileIdentity : occupied values
+    SessionState "1" *-- "0..1" Coordinate : selected
+
+    BoardSnapshot "1" *-- "0..64" TileIdentity : copied occupied values
+    SessionSnapshot "1" *-- "1" BoardSnapshot : contains
+    SessionSnapshot "1" *-- "0..1" Coordinate : copied selection
+    InteractionResult "1" *-- "1" SessionSnapshot : contains
+    InteractionResult "1" *-- "1" ResultReason : contains
+    InteractionResult "1" *-- "0..1" ResolutionResult : optional
+    ResolutionResult "1" *-- "1..*" ResolutionStep : ordered
+    ResolutionStep "1" *-- "1" MatchSet : cleared cells
+    ResolutionStep "1" *-- "1" BoardSnapshot : post-step
+    MatchSet "1" *-- "0..*" Coordinate : distinct values
+```
+
+`Board` and `BoardSnapshot` always represent an 8 x 8 grid with 64 positions, but zero to 64 positions may be occupied by `TileIdentity` values while cascade resolution temporarily leaves cells empty. Exactly 64 positions are occupied only when the session is stable and waiting for input. `BoardManager` is the only owner of mutable `Board` content and its tile-provider state. `GameCoordinator` is the only owner of mutable `SessionState`. The full, match-free, at-least-one-legal-move invariant applies only when the session is stable and waiting for input, not while a cascade is resolving. Snapshots and result records are immutable values or copies and never transfer state ownership. Derived GUI state is intentionally absent from the domain model and remains owned by `DesktopUIAdapter`.
+
+### Detailed Player-Move Scenario
+
+#### Phase A: Input, Selection, and Validation
+
+```mermaid
+sequenceDiagram
+    participant Player
+    participant UI as DesktopUIAdapter
+    participant Coordinator as GameCoordinator
+    participant Board as BoardManager
+    participant Rules as RuleEngine
+
+    Player->>UI: First tile click with Coordinate
+    UI->>Coordinator: Handle tile-selection request
+    Coordinator->>Coordinator: Store selected Coordinate
+    Coordinator-->>UI: InteractionResult with SessionSnapshot
+    UI->>UI: Render selected-tile highlight
+
+    Player->>UI: Second tile click with Coordinate
+    UI->>Coordinator: Handle second selection synchronously without GUI lock
+    Coordinator->>Coordinator: Capture pair and clear selected Coordinate
+    Coordinator->>Board: Obtain BoardSnapshot
+    Board-->>Coordinator: Immutable BoardSnapshot
+    Coordinator->>Rules: Check bounds and adjacency
+    Rules-->>Coordinator: Validation result
+
+    alt Invalid or non-adjacent selection
+        Coordinator-->>UI: Rejected result with unchanged board and score
+        UI->>UI: Render rejection without presentation lock
+    else Adjacent candidate
+        Coordinator->>Rules: Determine whether swap creates a match
+        Rules-->>Coordinator: Match-producing decision
+        alt Swap creates no match
+            Coordinator-->>UI: No-match result with unchanged board and score
+            UI->>UI: Render rejection without presentation lock
+        else Swap creates a match
+            Coordinator->>Board: Perform controlled swap
+            Board-->>Coordinator: Post-swap BoardSnapshot
+            Coordinator->>Rules: Find all matches
+            Rules-->>Coordinator: Initial MatchSet
+        end
+    end
+```
+
+#### Phase B: Cascade Resolution and Finalization
+
+```mermaid
+sequenceDiagram
+    participant Coordinator as GameCoordinator
+    participant Cascades as CascadeResolver
+    participant Board as BoardManager
+    participant Rules as RuleEngine
+    participant Scoring as ScoreRules
+
+    Coordinator->>Cascades: Resolve with initial MatchSet
+    loop For each non-empty cascade MatchSet
+        Cascades->>Board: Clear all matched coordinates
+        Board-->>Cascades: Cleared BoardSnapshot
+        Cascades->>Scoring: Calculate increment for MatchSet
+        Scoring-->>Cascades: Step score increment
+        Cascades->>Board: Apply downward gravity
+        Cascades->>Board: Refill empty cells
+        Board-->>Cascades: Post-step BoardSnapshot
+        Cascades->>Cascades: Collect ordered ResolutionStep
+        Cascades->>Rules: Find all matches in snapshot
+        Rules-->>Cascades: Next MatchSet
+    end
+    Cascades-->>Coordinator: ResolutionResult without session-score mutation
+    Coordinator->>Coordinator: Add total increment to authoritative score
+    Coordinator->>Board: Evaluate stable playable-board invariant
+    Board->>Rules: Obtain match-free and legal-move facts
+    Rules-->>Board: Invariant facts
+    Board-->>Coordinator: Playable or dead-board result
+    alt Stable board has no legal move
+        Coordinator->>Coordinator: Preserve accumulated score
+        Coordinator->>Board: Generate and install playable board
+        Board->>Rules: Validate generated candidate
+        Rules-->>Board: Match and legal-move facts
+        Board-->>Coordinator: Playable BoardSnapshot
+    else Stable board is playable
+        Coordinator->>Coordinator: Keep resolved board
+    end
+    Coordinator->>Coordinator: Create final SessionSnapshot with no selection and InteractionResult
+```
+
+The second-tile request is one synchronous core call, so `DesktopUIAdapter` does not lock input before calling `GameCoordinator`. A rejected result is rendered without acquiring the presentation lock. After Phase B, `GameCoordinator` returns the completed accepted `InteractionResult` to `DesktopUIAdapter`; only then does the adapter acquire its own GUI input lock, render the ordered `ResolutionStep` snapshots and derived intermediate score displays, render the authoritative final `SessionSnapshot`, and release the lock. The final accepted snapshot has no selected coordinate. The two diagrams intentionally separate selection and move validation from domain resolution to stay within five participants; together they describe one complete move at interface-flow level.
+
+### Step-by-Step Scenario Trace
+
+| Step | Initiating Component | Called Component | Data Passed | State Owner Changed | Result |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `DesktopUIAdapter` | `GameCoordinator` | Second `Coordinate` | None | Synchronous request enters coordination with the GUI input lock still clear. |
+| 2 | `GameCoordinator` | `GameCoordinator` | Stored first coordinate and requested second coordinate | `GameCoordinator` selected coordinate | Coordinate pair captured for validation and authoritative selection cleared for every completed attempt. |
+| 3 | `GameCoordinator` | `BoardManager` | Snapshot request | None | Immutable `BoardSnapshot` returned. |
+| 4 | `GameCoordinator` | `RuleEngine` | Snapshot and coordinate pair | None | Bounds, adjacency, and match-producing decision returned. If rejected, board content and accumulated score remain unchanged, the result has no selection, and `DesktopUIAdapter` renders it without locking. |
+| 5 | `GameCoordinator` | `BoardManager` | Accepted coordinate pair | `BoardManager` board content | Controlled swap installed and post-swap snapshot returned. |
+| 6 | `GameCoordinator` | `RuleEngine` | Post-swap snapshot | None | Initial `MatchSet` returned. |
+| 7 | `GameCoordinator` | `CascadeResolver` | Initial `MatchSet` | `BoardManager` board and tile-provider state through controlled calls | Ordered steps and total increment returned; resolver stores no session score. |
+| 8 | `GameCoordinator` | `GameCoordinator` | Returned `ResolutionResult` | `GameCoordinator` accumulated score | Authoritative score total updated; selection remains clear. |
+| 9 | `GameCoordinator` | `BoardManager` | Invariant evaluation or recovery request | `BoardManager` board/provider state only if recovery occurs; score unchanged | Final playable `BoardSnapshot` obtained. |
+| 10 | `DesktopUIAdapter` | `DesktopUIAdapter` | Completed accepted `InteractionResult`, ordered steps, and final `SessionSnapshot` | `DesktopUIAdapter` input-lock flag and widget/derived display state | Adapter acquires the lock, renders accepted resolution steps and the final no-selection snapshot, then releases the lock. |
+
+### Model Consistency Check
+
+- [x] Every component name exactly matches TODO 2: `BoardManager`, `RuleEngine`, `ScoreRules`, `CascadeResolver`, `GameCoordinator`, `DesktopUIAdapter`, and `ApplicationStartup`.
+- [x] Every construction and runtime edge matches TODO 3; no reverse or cyclic dependency is introduced.
+- [x] `BoardSnapshot`, `SessionSnapshot`, and result contracts remain immutable or copied rather than shared mutable state.
+- [x] `Board` and `BoardSnapshot` always represent 64 grid positions, allow temporary empty positions during resolution, and contain 64 occupied positions in a stable state waiting for input.
+- [x] No GUI component owns board content, selected coordinate, accumulated score, or a domain rule.
+- [x] `GameCoordinator` clears the selected coordinate after every completed second-tile attempt, including rejected and accepted attempts.
+- [x] `DesktopUIAdapter` leaves its input lock clear during the synchronous core request and on rejection; it locks only while presenting accepted resolution steps and unlocks after the final snapshot.
+- [x] `RuleEngine` remains stateless and is the only match-detection implementation.
+- [x] `CascadeResolver` owns resolution order but never stores or changes the accumulated session score.
+- [x] `ApplicationStartup` constructs and wires components but does not participate in a player move.
+- [x] The stable-board invariant is applied only at a state waiting for input, not during resolution.
+- [x] No future or out-of-scope component appears in any diagram.
+- [x] No file, module, physical refactor, or implementation mapping is proposed in TODO 5.
+
 ## Notes for TODO 6 (current code)
 
 ### Current Implementation Observations
@@ -811,4 +1056,249 @@ Do not commit yet.
 Mark any new interpretation not stated in writeup.md with "ASSUMPTION:".
 Append this exact prompt to the Prompt log.
 Run git diff --check when finished.
+```
+
+### TODO 5 prompt
+
+```text
+Continue Exercise 2 in exercise02_architecture.md.
+
+Complete only TODO 5: Derive Structural and Interaction Models.
+
+Insert TODO 5 immediately after TODO 4 and before
+"Notes for TODO 6 (current code)".
+
+Do not modify TODO 1 through TODO 4.
+Use the same seven component names, interfaces, contracts, ownership rules,
+selected architecture, and dependency directions exactly as already defined.
+
+Use GitHub-compatible Mermaid syntax.
+Use top-down layouts for component and structural diagrams.
+Do not use custom Mermaid configuration, HTML labels, or decorative styling.
+Keep each sequence diagram to no more than five participants.
+
+## Required structure
+
+## TODO 5: Structural and Interaction Models
+
+### Component Diagram
+
+Create one Mermaid `flowchart TD` showing all seven components:
+
+- ApplicationStartup
+- DesktopUIAdapter
+- GameCoordinator
+- BoardManager
+- RuleEngine
+- CascadeResolver
+- ScoreRules
+
+Group them conceptually as:
+
+- Composition/lifecycle
+- GUI adapter
+- Application coordination
+- Domain state and services
+
+Show two edge types:
+
+- dashed edges for construction/wiring by ApplicationStartup;
+- solid directed edges for runtime dependencies from TODO 3.
+
+The diagram must preserve this runtime dependency direction:
+
+- DesktopUIAdapter → GameCoordinator
+- GameCoordinator → BoardManager
+- GameCoordinator → RuleEngine
+- GameCoordinator → CascadeResolver
+- BoardManager → RuleEngine
+- CascadeResolver → BoardManager
+- CascadeResolver → RuleEngine
+- CascadeResolver → ScoreRules
+
+Add a short legend and explanation.
+Do not add any new component.
+
+### Domain Structural Model
+
+Create one Mermaid `classDiagram` showing the main domain entities and immutable
+contracts, not Python implementation classes.
+
+Include only the necessary concepts:
+
+- SessionState
+- Board
+- TileIdentity
+- Coordinate
+- BoardSnapshot
+- SessionSnapshot
+- InteractionResult
+- ResolutionResult
+- ResolutionStep
+- MatchSet
+- ResultReason
+
+Show these ownership and containment relationships:
+
+- GameCoordinator conceptually owns SessionState.
+- BoardManager conceptually owns Board and tile-provider state.
+- Board contains an 8 x 8 arrangement of TileIdentity values.
+- SessionState contains selected Coordinate or no selection, accumulated score,
+  and lifecycle/readiness state.
+- SessionSnapshot contains a BoardSnapshot and copied session values.
+- InteractionResult contains a SessionSnapshot, ResultReason, optional
+  ResolutionResult, and recovery indicator.
+- ResolutionResult contains ordered ResolutionStep values and total increment.
+- ResolutionStep contains MatchSet, post-step BoardSnapshot, and score increment.
+
+Clearly distinguish:
+
+- authoritative mutable state,
+- immutable/copy contracts,
+- derived GUI state, which must not appear as domain ownership.
+
+Add a short ownership/invariant note below the diagram:
+
+- BoardManager is the only mutable-board owner.
+- GameCoordinator is the only session-state owner.
+- The stable board invariant applies only while waiting for input.
+- Snapshots and result records do not transfer state ownership.
+
+### Detailed Player-Move Scenario
+
+Model one complete player move, including both rejection and acceptance branches.
+Use two compact Mermaid `sequenceDiagram` blocks so that each has no more than
+five participants.
+
+#### Phase A: Input, Selection, and Validation
+
+Participants:
+
+- Player
+- DesktopUIAdapter
+- GameCoordinator
+- BoardManager
+- RuleEngine
+
+Show:
+
+1. first tile click and selected-coordinate update;
+2. immutable SessionSnapshot returned for highlighting;
+3. second tile click and GUI input-lock acquisition;
+4. board snapshot retrieval;
+5. bounds and adjacency validation;
+6. match-producing-swap validation;
+7. rejected branch with unchanged board and score;
+8. accepted branch with controlled board swap and initial MatchSet.
+
+Use Mermaid `alt` blocks for rejected versus accepted outcomes.
+
+#### Phase B: Cascade Resolution and Finalization
+
+Participants:
+
+- GameCoordinator
+- CascadeResolver
+- BoardManager
+- RuleEngine
+- ScoreRules
+
+Show:
+
+1. GameCoordinator calls CascadeResolver with the initial MatchSet;
+2. a Mermaid `loop` for each cascade step;
+3. simultaneous clear through BoardManager;
+4. gravity and refill through BoardManager;
+5. match detection through RuleEngine;
+6. score increment through ScoreRules;
+7. ordered ResolutionStep collection;
+8. ResolutionResult returned without changing the session score;
+9. GameCoordinator updates the authoritative score total;
+10. stable playable-board invariant check;
+11. optional dead-board recovery with score preservation;
+12. final SessionSnapshot and InteractionResult creation.
+
+After the diagrams, explain that GameCoordinator returns the final result to
+DesktopUIAdapter, which renders the ordered steps and final state before releasing
+its own GUI input lock.
+
+### Step-by-Step Scenario Trace
+
+Add a concise table with:
+
+- Step
+- Initiating Component
+- Called Component
+- Data Passed
+- State Owner Changed
+- Result
+
+Cover the accepted move from second click through final rendering.
+Do not duplicate every detail already visible in the sequence diagrams.
+
+### Model Consistency Check
+
+Add a short checklist confirming:
+
+- every component name matches TODO 2;
+- every dependency matches TODO 3;
+- no reverse or cyclic dependency was introduced;
+- no snapshot becomes mutable shared state;
+- no GUI component owns board, selection, or accumulated score;
+- RuleEngine remains stateless;
+- CascadeResolver does not store the score total;
+- ApplicationStartup does not participate in a player move;
+- no future/out-of-scope component appears in the diagrams.
+
+Mark every new interpretation not stated in writeup.md with "ASSUMPTION:".
+
+Do not propose files, modules, or implementation refactoring; that belongs to
+TODO 6.
+Do not modify code, README.md, writeup.md, or tests.
+Do not commit yet.
+
+Append this exact prompt to the Prompt log.
+Run git diff --check when finished.
+```
+
+### TODO 5 consistency-correction prompt
+
+```text
+Revise only TODO 5 and append this exact prompt to the Prompt log. Do not modify TODO 1–4, “Notes for TODO 6 (current code)”, any Python file, tests, or README.
+
+Make these consistency corrections:
+
+1. In the Domain Structural Model, represent that Board and BoardSnapshot always have an 8 x 8 grid of 64 positions, but may contain empty positions temporarily during cascade resolution.
+   - Do not model Board or BoardSnapshot as always containing exactly 64 TileIdentity values.
+   - A simple 0..64 occupied TileIdentity multiplicity plus an explanatory sentence is sufficient.
+   - State that exactly 64 positions are occupied only in a stable state waiting for input.
+   - Do not introduce a new architectural component.
+
+2. Correct the GUI input-lock timing to match the existing assumption:
+   - The core handles the second-tile request synchronously.
+   - DesktopUIAdapter must not acquire the input lock before calling GameCoordinator.
+   - Rejected requests do not need the presentation lock.
+   - For an accepted move, DesktopUIAdapter acquires its lock only after the completed InteractionResult has returned and only while it presents the ordered ResolutionStep snapshots.
+   - It releases the lock after rendering the authoritative final SessionSnapshot.
+   - Because DesktopUIAdapter is intentionally absent from Phase B, express this timing in the prose after Phase B and in the scenario trace rather than adding a sixth participant.
+
+3. Make selection-state ownership and transitions explicit:
+   - After a second-tile request, GameCoordinator clears the selected coordinate for every completed attempt, whether invalid, non-adjacent, matchless, or accepted.
+   - Show this once in Phase A at the appropriate point instead of only in rejection branches.
+   - Rejected results must say that board content and accumulated score are unchanged, not that the entire SessionSnapshot is unchanged.
+   - The final accepted SessionSnapshot must contain no selected coordinate.
+
+4. Replace the inaccurate phrase “GUI validation” with “selection and move validation” or equivalent wording. Validation remains in the GUI-independent core.
+
+5. Update the Step-by-Step Scenario Trace so that:
+   - no GUI lock is acquired when the second request is sent;
+   - the selected-coordinate change owned by GameCoordinator is visible;
+   - the lock is acquired and released only during presentation of accepted resolution steps;
+   - board and score preservation on rejection is described precisely.
+
+6. Update the Model Consistency Check to confirm the temporary-empty-cell model, selection clearing, and corrected input-lock timing.
+
+Keep both sequence diagrams at no more than five participants, preserve all seven fixed component names and TODO 3 dependency directions, and make no implementation proposal.
+
+Run git diff --check and report the result. Do not commit.
 ```
