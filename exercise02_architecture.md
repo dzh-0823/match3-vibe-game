@@ -30,7 +30,7 @@ Match detection only identifies coordinates. Removal, refill, and cascading cons
 - **Further maintainability goals:** responsibilities should remain easy to understand and central gameplay values should not be duplicated. IDs: UR-08 and NFR-05, both deferred (Should have).
 - **Documentation and scope control:** the supported environment, commands, dependencies, rules, and design decisions must be documented without adding out-of-scope product features. IDs: NFR-06, NFR-08.
 - **Local runtime, offline operation, host integrity, and shutdown:** the architecture must run locally without accounts, services, elevated privileges, or persistent game data and must close cleanly. IDs: UR-06, NFR-09, NFR-10, NFR-12, NFR-13. NFR-11 is deferred (Could have).
-- **Concrete TODO 6 delivery constraints:** Python 3.13, standard-library tkinter, and no third-party packages are the documented realization of NFR-06, NFR-09, and NFR-10.
+- **Concrete TODO 6 delivery constraints:** Python 3.14, standard-library tkinter, and no third-party packages are the documented realization of NFR-06, NFR-09, and NFR-10.
 
 ### Requirement Traceability
 
@@ -585,28 +585,150 @@ The second-tile request is one synchronous core call, so `DesktopUIAdapter` does
 - [x] No future or out-of-scope component appears in any diagram.
 - [x] No file, module, physical refactor, or implementation mapping is proposed in TODO 5.
 
-## Notes for TODO 6 (current code)
+## TODO 6: Architecture-Guided Implementation Plan
 
-### Current Implementation Observations
+The game is already implemented and was validated for Exercise 1. This TODO therefore defines a behavior-preserving migration from the current two-file design toward the logical architecture in TODO 1–5; it is not a greenfield implementation and does not authorize a rewrite in one step.
 
-The current implementation already has a useful coarse-grained division. `match3.py` imports no tkinter code and contains the constants, type aliases, pure board predicates, `MoveResult`, generation logic, and the stateful `Game` class. `main.py` contains the application entry point and one `Match3App` view/controller that creates widgets, tracks the current selection and busy flag, forwards swap and restart requests to `Game`, and renders the returned state. `tests/test_match3.py` targets `match3.py` directly with deterministic data. This matches the Exercise 1 requirement to keep logic testable without opening a window.
+### 1. Implementation Readiness Assessment
 
-Within `match3.py`, the responsibility areas are logical boundaries rather than separate components. `Game` currently combines board ownership, scoring, cascade orchestration, refill, restart, and recovery, while standalone functions provide detection and move predicates. Within `main.py`, user-input handling and presentation are both methods of `Match3App`. These combinations are proportionate to the small prototype and are observations, not a proposal to split the code at this stage.
+The architecture is concrete enough to guide incremental code generation. TODO 1–5 fix the seven component names, single owners for mutable state and rules, shared-contract semantics, synchronous player-move flow, acyclic dependencies, selected architectural pattern, and stable-board invariant. They also fix that tkinter terminates at `DesktopUIAdapter`, `ApplicationStartup` is the composition root, and the GUI input lock is used only to present an accepted move's returned resolution steps.
 
-There are several differences between the requirements model and the concrete implementation. TODO 5 describes explicit lifecycle states such as Validating, Detecting Matches, Refilling, and Recovering, but the code does not define a state enum or state-machine object; synchronous `Game` calls plus `Match3App.selected` and `busy` provide the required observable behavior. FR-08 permits reshuffling or regeneration, while `ensure_playable` specifically regenerates a dead board. The generator also enforces that all six configured identities occur on a returned board, which is a concrete interpretation of FR-01.
+| Status | Decisions or details |
+| --- | --- |
+| Fixed by TODO 1–5 | Component responsibilities and names; state ownership; rule ownership; dependency directions; modular component-based style with one-way layering; synchronous coordination; stable-board invariant; accepted/rejected move flow; restart and recovery semantics; immutable/copy contract semantics; no tkinter in the core. These decisions must not be reopened during migration. |
+| Clarify before the affected stage | Whether the existing `Game`, `MoveResult`, and imported module-level functions remain temporary compatibility APIs until all tests migrate; the exact delay or scheduling used when `DesktopUIAdapter` presents returned `ResolutionStep` values; and whether a private coordinator readiness flag or private enum is preferable. None of these choices changes component ownership or observable gameplay. |
+| Safely deferred | Separate packages or one-file-per-component packaging; richer animation; asynchronous processing; special tiles; level progression; persistence; networking; plug-ins; and all Exercise 1 deferred or out-of-scope features. |
 
-The implementation provides some separation requested by the deferred NFR-05 even though TODO 4 did not make the broader maintainability exercise part of prototype acceptance. Conversely, the automated suite focuses on domain behavior and non-visual processing. Exercise 1 identified GUI response timing, visible feedback, and close behavior as manual acceptance concerns rather than fully automated tkinter tests.
+The current implementation already provides a sound migration base: `match3.py` imports no tkinter, deterministic boards/refills are injectable, and `tests/test_match3.py` exercises the core without a window. `Game` and `Match3App` are coarse-grained but working units that should be replaced behind tests rather than discarded.
 
-### Responsibility → current code location
+The explicit lifecycle states such as Validating, Detecting Matches, Refilling, and Recovering come from the **Exercise 1 TODO 5 finite-state model**, not from Exercise 2 TODO 5. The current code does not implement a state enum; synchronous `Game` calls plus `Match3App.selected` and `Match3App.busy` reproduce the required observable flow.
 
-- Board and tile management → constants, board types, `copy_board`, `has_legal_move`, `is_playable_board`, `generate_playable_board`, and board/refill members of `Game` in `match3.py`.
-- Move and rule processing → `in_bounds`, `are_adjacent`, `_swap`, `swap_creates_match`, and validation in `Game.attempt_swap` in `match3.py`.
-- Match detection → `find_matches` in `match3.py`.
-- Removal, refill, and cascading → `Game._resolve_cascades` and `Game._apply_gravity_and_refill` in `match3.py`.
-- Scoring → `POINTS_PER_TILE` and score-increment logic in `Game._resolve_cascades` in `match3.py`; the current score total is also stored in `Game`.
-- Game-state coordination → `Game.attempt_swap`, `Game.restart`, and `Game.ensure_playable` in `match3.py`; selection is currently stored in `Match3App.selected` in `main.py`.
-- User input → `Match3App.on_tile_click`, `Match3App.restart`, and the current `Match3App.busy` input lock in `main.py`.
-- Presentation → `TILE_STYLES`, `Match3App.render`, `Match3App._show_resolution_step`, and tkinter status/score widgets in `main.py`.
+Exercise 1 records that 16 `unittest` tests passed and that the GUI was manually accepted. On 2026-11-01, the project `.venv` was changed to Python 3.14.3 based on `C:\Python314` because the earlier Windows Store interpreter was unavailable. The required `unittest` command was rerun and reported `Ran 16 tests in 0.037s` and `OK` with exit code 0. The `compileall` command also completed with exit code 0 and no output. A separate runtime-alignment change then replaced the legacy exact-version guard with a Python 3.14 minimum-version guard. GUI acceptance under Python 3.14 remains pending.
+
+### 2. Current-to-Target Gap Analysis
+
+| Concern or responsibility | Current code location and behavior | Target component and owner | Gap | Required implementation action |
+| --- | --- | --- | --- | --- |
+| Board ownership and tile-provider state | `Game.board`, `Game.rng`, `Game._refill_iterator`, and `Game._next_tile` in `match3.py` own mutable board/refill state; `generate_playable_board` accepts the RNG. | `BoardManager` exclusively owns board content and its random or deterministic tile provider. | State is already GUI-independent and deterministic, but it is mixed with session score and workflow in `Game`; generation is a standalone function rather than a controlled owner operation. | Move board storage, provider state, generation, copy/snapshot creation, validation, swap, clear, gravity, and refill behind `BoardManager` while retaining current algorithms and deterministic fallback behavior. |
+| Move and match rules | `in_bounds`, `are_adjacent`, `find_matches`, `swap_creates_match`, `has_legal_move`, and `_swap` are module functions; `Game.attempt_swap` repeats tentative swap/match logic instead of calling `swap_creates_match`. | Stateless `RuleEngine` owns bounds, adjacency, swap legality, all-match detection, and legal-move detection. | Most rules are already pure and centralized, but `_swap` mutates supplied lists and match-producing validation has two call paths. | Retain one match implementation, make rule inputs snapshots, remove mutation from rule evaluation, and route all callers through the `RuleEngine` boundary. |
+| Cascade orchestration | `Game._resolve_cascades` loops over matches, clears cells, updates score, calls `Game._apply_gravity_and_refill`, invokes an observer, and detects the next match. | `CascadeResolver` owns sequence; `BoardManager`, `RuleEngine`, and `ScoreRules` perform their owned operations. | Order is correct, but orchestration, mutation, score policy, score total, and presentation callback are coupled in `Game`. | Move only the ordered loop to `CascadeResolver`; mutate through `BoardManager`, query `RuleEngine`, call `ScoreRules`, and return ordered immutable steps without a GUI callback. |
+| Scoring formula versus accumulated score | `POINTS_PER_TILE` and `len(current_matches) * POINTS_PER_TILE` in `Game._resolve_cascades` define the formula; `Game.score` stores and mutates the total. | `ScoreRules` owns the formula; `GameCoordinator` owns the total. | The formula constant is centralized, but formula and total update occur in the same method. | Extract a pure increment calculation; have `CascadeResolver` total increments and `GameCoordinator` apply the returned total exactly once. |
+| Selected-coordinate ownership | `Match3App.selected` in `main.py` stores the first coordinate; `Match3App.on_tile_click` decides first versus second selection and clears it. | `GameCoordinator` exclusively owns selection and selection transitions. | Selection is currently GUI state and cannot be tested through the core. | Move first/second selection handling into `GameCoordinator`; return selection in `SessionSnapshot`; leave `DesktopUIAdapter` to translate clicks and render the returned highlight. |
+| Restart and dead-board recovery | `Game.restart` resets `Game.score` and generates a board. `Game.ensure_playable` checks/regenerates and implicitly preserves score; `Game.attempt_swap` decides when to call it. | `GameCoordinator` decides restart/recovery and owns score effects; `BoardManager` generates and installs boards and evaluates the invariant. | Behavior is correct, but decision, board generation, board state, and score are combined in `Game`. | Split the workflow decision from board operations while preserving regeneration, zero-on-restart, score preservation on recovery, and the final playable invariant. |
+| Immutable snapshots and result contracts | `copy_board` returns a mutable list copy. The GUI reads `Game.board` and `Game.score` directly. Frozen `MoveResult` contains summary fields and string reasons but no snapshots or ordered steps; resolution uses a callback. | `BoardSnapshot`, `SessionSnapshot`, `ResolutionStep`, `ResolutionResult`, `InteractionResult`, and `ResultReason`. | `MoveResult` is immutable but incomplete; mutable board lists cross boundaries and no authoritative session snapshot exists. | Introduce contracts first, adapt existing behavior to populate them, and stop exposing mutable board lists before removing compatibility access. |
+| GUI input-lock ownership and timing | `Match3App.busy` belongs to the GUI, but `_set_busy(True)` runs before synchronous `Game.attempt_swap` and `Game.restart`; `_show_resolution_step` is called from the core during that call. | `DesktopUIAdapter` owns the lock and acquires it only after an accepted `InteractionResult` returns, while presenting ordered steps. | Ownership already matches, but timing and callback direction contradict TODO 5's synchronous return-then-present flow. | Replace the observer with ordered returned steps; do not lock for the core call or rejection; lock only for accepted-step presentation and release after the final `SessionSnapshot`. |
+| GUI presentation | `Match3App`, `TILE_STYLES`, `render`, `_show_resolution_step`, tkinter variables/widgets, and status wording in `main.py` render the game. | `DesktopUIAdapter` owns all tkinter event translation, widgets, derived display state, and wording. | This boundary mostly exists, but `Match3App` also owns selection and constructs `Game`. | Rename/adapt the class after coordination is available, render snapshots/results instead of reading `Game`, and retain all existing colors, symbols, messages, and mouse behavior unless tests/acceptance require only semantic equivalence. |
+| Startup and dependency wiring | `main` enforces a Python 3.14 minimum, creates `tk.Tk`, constructs `Match3App`, and starts `mainloop`; `Match3App.__init__` constructs `Game`. Default tkinter close behavior ends the loop. | `ApplicationStartup` constructs and wires all components and owns start/clean-close lifecycle only. | The runtime guard is aligned. The remaining gap is that startup is not a full composition root because the UI constructs domain state and close handling is implicit. | Keep the aligned runtime guard; add small startup functions that construct the dependency graph, pass `GameCoordinator` into the adapter, register clean close, and keep gameplay decisions out of startup. |
+
+The implementation already satisfies the crucial physical core/GUI separation and much of the required behavior. The migration is primarily an ownership, interface, and dependency refinement; it must not replace proven algorithms merely to match component names.
+
+### 3. Minimal Physical Code Structure
+
+The proportional target remains three physical files:
+
+- `match3.py`: GUI-independent contracts plus logical `BoardManager`, `RuleEngine`, `ScoreRules`, `CascadeResolver`, and `GameCoordinator`.
+- `main.py`: `DesktopUIAdapter`, `ApplicationStartup`, and the executable entry point.
+- `tests/test_match3.py`: GUI-independent unit and workflow tests.
+
+The seven architectural components are logical ownership boundaries, not a demand for seven files or seven classes. Stateful owners and orchestrators benefit from classes; compact stateless rules can remain pure functions grouped by a clearly named component section. Startup is naturally a small set of functions. No package hierarchy, persistence, networking, plug-in framework, third-party library, or additional runtime layer is justified.
+
+| Fixed architectural component | Target file | Proposed Python representation | State owned | Constructor dependencies | Main provided operations |
+| --- | --- | --- | --- | --- | --- |
+| `BoardManager` | `match3.py` | Class | Mutable board plus RNG/deterministic provider state | `RuleEngine` operations and injected tile provider; optional supplied board | Snapshot, install/generate board, swap, clear, gravity, refill, stable-invariant evaluation |
+| `RuleEngine` | `match3.py` | Named group of pure functions (a logical component, not necessarily an instance) | Stateless | None | Bounds, adjacency, match-producing swap, all matches, legal-move existence |
+| `ScoreRules` | `match3.py` | Pure score-increment function grouped under the logical component | Stateless | None | Calculate 10 points per distinct cleared coordinate |
+| `CascadeResolver` | `match3.py` | Class | No persistent state between calls; collaborator references only | `BoardManager`, `RuleEngine`, `ScoreRules` | Resolve all cascades and return `ResolutionResult` |
+| `GameCoordinator` | `match3.py` | Class | Selected coordinate, accumulated score, private readiness/workflow state | `BoardManager`, `RuleEngine`, `CascadeResolver` | Handle selection, restart, snapshot, score update, recovery coordination |
+| `DesktopUIAdapter` | `main.py` | Class adapted from `Match3App` | Widgets, derived display state, GUI input-lock flag | `tk.Tk`, `GameCoordinator` | Translate clicks/restart, render snapshots/results, present accepted steps under lock |
+| `ApplicationStartup` | `main.py` | `create_application`, close-handler, and `main` functions | Root/application lifecycle references only | Constructors for the other six logical components | Construct/wire, start main loop, close cleanly |
+
+`GameCoordinator` depends only on `BoardManager`, `RuleEngine`, and `CascadeResolver`; `CascadeResolver` depends only on `BoardManager`, `RuleEngine`, and `ScoreRules`; `BoardManager` uses `RuleEngine` only for the stable playable-board invariant. `DesktopUIAdapter` depends only on `GameCoordinator` during gameplay. These physical choices preserve every TODO 3 direction.
+
+### 4. Concrete Data and Interface Decisions
+
+The following choices make TODO 3 concrete for later code generation. Each representation choice is an architectural **ASSUMPTION:** because `writeup.md` requires behavior and testability but does not prescribe Python data types.
+
+| Contract or dependency | Proposed standard-library representation | Mutability | Producer | Consumers | Important invariants |
+| --- | --- | --- | --- | --- | --- |
+| `Coordinate` | **ASSUMPTION:** `tuple[int, int]` type alias | Immutable value | `DesktopUIAdapter` and result-producing core code | `GameCoordinator`, `RuleEngine`, `BoardManager`, contracts | Exactly row then column; validity is decided by `RuleEngine`, not by construction. |
+| `TileIdentity` and empty cell | **ASSUMPTION:** an `IntEnum` with six identities whose values preserve current integers `0`–`5`; `None` represents a temporary empty position. | Enum/value immutable; `None` immutable | Tile provider and board construction | All core components; GUI through snapshots | Equality uses identity, not display color; `None` never forms a match and is absent from a stable ready board. |
+| `BoardSnapshot` | **ASSUMPTION:** `tuple[tuple[TileIdentity | None, ...], ...]` | Deeply immutable tuple copy | `BoardManager` | `RuleEngine`, `CascadeResolver`, `GameCoordinator`, other contracts | Always 8 rows of 8 positions; may contain `None` during resolution; a ready snapshot is full, match-free, and playable. |
+| `MatchSet` | **ASSUMPTION:** `frozenset[Coordinate]` | Immutable | `RuleEngine` | `CascadeResolver`, `ScoreRules`, `ResolutionStep` | Contains each matched coordinate once; empty means no current match. |
+| `ResultReason` | **ASSUMPTION:** `Enum` values `SELECTED`, `INVALID_SELECTION`, `NOT_ADJACENT`, `NO_MATCH`, `ACCEPTED`, `RESTARTED`, and `DEAD_BOARD_RECOVERED`. | Immutable enum | `GameCoordinator`, using rule facts | `DesktopUIAdapter`, tests | Codes contain no GUI wording. Recovery may be represented by `DEAD_BOARD_RECOVERED` plus an accepted result's resolution data; exact display text remains adapter-owned. |
+| `ResolutionStep` | **ASSUMPTION:** frozen dataclass with `matches: MatchSet`, `board: BoardSnapshot`, and `score_increment: int`. | Immutable | `CascadeResolver` | `GameCoordinator`, `DesktopUIAdapter` through results | Snapshot is the post-gravity/refill state for that step; increment equals `ScoreRules(matches)`. |
+| `ResolutionResult` | **ASSUMPTION:** frozen dataclass with `steps: tuple[ResolutionStep, ...]` and `total_score_increment: int`. | Immutable | `CascadeResolver` | `GameCoordinator`; adapter through `InteractionResult` | Steps retain cascade order; total equals the sum of step increments; it never mutates session score. |
+| `SessionSnapshot` | **ASSUMPTION:** frozen dataclass with `board`, `score`, `selected`, and `ready` fields. | Immutable | `GameCoordinator` | `DesktopUIAdapter`, tests | Score is non-negative; `selected` is `None` after any completed second-tile attempt and restart; `ready=True` implies the stable-board invariant. |
+| `InteractionResult` | **ASSUMPTION:** frozen dataclass with `reason`, `session`, optional `resolution`, and `recovered` fields. | Immutable | `GameCoordinator` | `DesktopUIAdapter`, tests | Rejection has no resolution and preserves board/score; acceptance returns the final no-selection snapshot; GUI objects and full user-facing strings are forbidden. |
+| Replaceable tile provider | **ASSUMPTION:** a constructor-injected zero-argument `Callable[[], TileIdentity]`; normal construction closes over `random.Random`, while tests may use a small deterministic callable object holding a sequence index. | Callable identity is stable; provider/RNG position is mutable and exclusively owned through `BoardManager` | `ApplicationStartup` or tests construct it; `BoardManager` owns it after injection | `BoardManager` only | Returned identities are one of six values. **ASSUMPTION:** exhaustion of a finite test refill sequence falls back to the owned random provider, preserving current `Game._next_tile` behavior. This is dependency injection for testing, not a plug-in system. |
+
+**ASSUMPTION:** `BoardManager` keeps its authoritative board as a private mutable `list[list[TileIdentity | None]]` because gravity and clearing are mutations; only `BoardSnapshot` crosses the boundary. **ASSUMPTION:** compatibility properties may expose defensive list copies temporarily while existing tests migrate, but no caller may retain a reference to owned board storage.
+
+The remaining issues to settle immediately before code generation are limited: decide the temporary compatibility lifetime of `Game`/`MoveResult` and the old module functions, and choose whether `DesktopUIAdapter` presents returned steps immediately with `update_idletasks` or schedules them with tkinter callbacks. These are explicitly unresolved; no component ownership, dependency, rule, or new feature is inferred from them.
+
+### 5. Incremental Implementation Sequence
+
+Each stage must produce a reviewable diff and keep the game behavior available. A later stage starts only after the prior completion evidence passes.
+
+1. **Record and protect the baseline.** Establish the migration safety boundary by recording the current public imports, `Game` behavior, GUI acceptance observations, and test names. Preserve all current gameplay, rejection reasons, deterministic fixtures, and visuals. Completion evidence is the existing suite plus the Python 3.14 virtual-environment test/compile run; if behavior lacks characterization, add only focused tests. Every later stage depends on this baseline.
+2. **Introduce immutable contracts without changing behavior.** Add `Coordinate`, `BoardSnapshot`, `MatchSet`, `ResultReason`, `ResolutionStep`, `ResolutionResult`, `SessionSnapshot`, and `InteractionResult`, initially adapting current results where necessary. Existing `Game` calls and all 16 current tests must still pass; proposed contract tests verify tuple/frozen behavior and defensive copies. Stages 3–8 depend on stable contracts.
+3. **Establish `RuleEngine` and `ScoreRules` as the single rule owners.** Route current bounds, adjacency, swap legality, match detection, legal-move detection, and scoring calculations through the stateless boundaries without changing algorithms or point totals. Existing match, move, generation, and scoring tests remain unchanged or are mechanically retargeted; proposed focused score-rule tests confirm distinct-cell calculation. `BoardManager`, `CascadeResolver`, and `GameCoordinator` depend on this stage.
+4. **Establish `BoardManager` as sole board/provider owner.** Move `Game.board`, `Game.rng`, `_refill_iterator`, `_next_tile`, board generation, controlled mutation, gravity, refill, and snapshot creation behind the manager. Preserve seeded generation, supplied boards, refill sequences, the validated fallback, all-six-identity generation, and stable-board checks. Existing generation/gravity/recovery tests plus proposed snapshot/provider tests are completion evidence. Stages 5–8 depend on this owner.
+5. **Move cascade sequencing to `CascadeResolver`.** Transfer the `_resolve_cascades` order without changing clear/score/gravity/refill/detect semantics. Return ordered steps and total increment; do not update session score or call the GUI. Existing one-, two-, and ten-step cascade tests must retain exact counts/scores through the caller; proposed resolver tests inspect step order and post-step snapshots. `GameCoordinator` and adapter migration depend on this stage.
+6. **Establish `GameCoordinator` as session owner.** Move first/second selection, score total, accepted/rejected workflow, restart, invariant checking, and recovery decisions into coordination. Preserve board/score on rejection, exact scoring, restart zeroing, recovery score preservation, and final playability. Proposed coordinator tests cover first selection, every second-selection outcome, accepted no-selection snapshots, restart, and recovery. The GUI adapter and startup stages depend on this stage.
+7. **Adapt `Match3App` into `DesktopUIAdapter`.** Inject `GameCoordinator`; remove GUI ownership of `selected`; render only snapshots/results. Retain `busy` only as the adapter presentation lock, leave it clear for synchronous core calls and rejections, and acquire it only while displaying accepted returned steps. Existing manual visuals and feedback must remain semantically unchanged. Manual click, feedback, score, cascade, lock, restart, and continued-play checks provide completion evidence. Startup depends on this stage.
+8. **Make `ApplicationStartup` the composition root.** Move creation of providers and all dependencies out of the adapter; keep version checking, root construction, main-loop start, and clean close in startup functions. Preserve the launch command, window behavior, offline operation, and normal termination. Compile/import checks and manual launch/close checks are completion evidence. Final regression depends on this stage.
+9. **Run complete regression and acceptance.** Execute all automated tests, compile all Python sources, verify dependency boundaries, and repeat the Exercise 1 GUI scenarios for valid/invalid moves, score changes, cascades, restart, recovery/continued play, presentation locking, and close. Completion requires no Must-requirement regression and no unapproved compatibility shim; this is the gate for declaring the migration complete.
+
+Separate review and commits are appropriate after each passing stage, but this plan does not perform or commit any stage.
+
+### 6. Verification Plan
+
+| Component or boundary | Existing evidence that can remain | Test movement or proposed evidence |
+| --- | --- | --- |
+| `RuleEngine` | Existing `MatchDetectionTests`, invalid/matchless cases in `MoveTests`, and generation predicates exercise `find_matches`, `swap_creates_match`, and `has_legal_move`. | **Proposed:** rename/retarget these as `RuleEngineTests` only when the API changes; add snapshot-only assertions proving rule evaluation does not mutate `BoardManager`. |
+| `ScoreRules` | Existing valid-swap and cascade tests assert exact totals using `POINTS_PER_TILE`. | **Proposed:** direct unit tests for empty, three-cell, long, and intersecting `MatchSet` increments; retain workflow totals to prove coordinator accumulation. |
+| `BoardManager` | Existing `BoardGenerationTests`, gravity test, dead-board tests, dimension/tile constants, and deterministic seeds/refills cover much of its behavior. | **Proposed:** move the private `_apply_gravity_and_refill` test to the public controlled manager boundary; add defensive/immutable `BoardSnapshot` tests and deterministic provider-injection/exhaustion tests. |
+| `CascadeResolver` | Existing one-, two-, and ten-step cascade tests prove order outcomes, counts, totals, stability, and timing through `Game`. | **Proposed:** resolver-focused tests verify ordered `ResolutionStep` values, temporary empty handling through manager operations, total increment, and no stored session score. |
+| `GameCoordinator` | Current `Game.attempt_swap`, restart, and recovery tests cover workflow outcomes but not first selection because selection currently lives in `Match3App`. | **Proposed:** first-click selection snapshot; invalid/out-of-bounds, non-adjacent, and no-match second click; selection clearing after every attempt; accepted workflow; score total ownership; restart reset; dead-board recovery with score preservation. |
+| Immutable contracts | Frozen `MoveResult` exists, and `copy_board` tests indirectly compare copies, but callers can still receive mutable lists. | **Proposed:** mutation attempts fail for frozen/tuple contracts; modifying a supplied board after installation and modifying a compatibility copy cannot alter `BoardManager`; result steps remain ordered and immutable. |
+| Tile-provider boundary | Existing seeded generation and supplied `refill_tiles` tests prove reproducibility. | **Proposed:** inject two providers yielding the same sequence and assert identical snapshots; assert invalid identities fail clearly; preserve documented fallback after finite sequence exhaustion. |
+| Core/GUI dependency boundary | All current automated tests import `match3.py` without opening tkinter; `match3.py` currently has no tkinter import. | **Proposed:** import `match3` in a clean process and inspect that it imports no tkinter module; static review confirms no core reference to `DesktopUIAdapter`. |
+| `DesktopUIAdapter` | No automated tkinter test exists. Exercise 1 records manual checks for valid/invalid swaps, score, cascades, restart, and continued play. | **Proposed manual:** verify colors plus symbols, selection highlight, rejection feedback, ordered accepted steps, lock only during accepted-step presentation, final score/board, restart, recovery feedback, and no interaction corruption. |
+| `ApplicationStartup` | `main.main` now accepts Python 3.14 or newer, creates the root, runs `mainloop`, and relies on normal tkinter close. | **Proposed:** retain the aligned guard; manually launch and close on Python 3.14, confirm no remaining process or persistent game data, and keep this GUI recheck pending until recorded. |
+
+Tests should be moved or renamed only when the component API they exercise changes. Existing assertions must remain as regression evidence; migration is not a reason to weaken them. Proposed tests are not claimed to exist.
+
+Current read-only validation results using `.\.venv\Scripts\python.exe` (Python 3.14.3):
+
+- `.\.venv\Scripts\python.exe -m unittest discover -s tests -v` — passed with exit code 0; output ended with `Ran 16 tests in 0.037s` and `OK`.
+- `.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests` — passed with exit code 0 and no output, indicating no compile errors.
+
+Both commands must continue to pass before Stage 1 is accepted and after every stage whose diff changes Python.
+
+### 7. Coding-Agent Handoff
+
+Supply a coding agent with these artifacts in order:
+
+1. `writeup.md`, especially the validated Must requirements and Exercise 1 TODO 5 behavior models.
+2. TODO 1–6 of `exercise02_architecture.md`, with TODO 2 component names, TODO 3 dependencies, TODO 5 flows, and this staged plan treated as authoritative.
+3. Current `match3.py`, `main.py`, and `tests/test_match3.py` as the behavior-preserving baseline.
+4. Required validation commands: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`, `.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests`, `git diff --check`, and `git status --short`, plus the applicable manual GUI checklist for GUI stages.
+
+Sample handoff prompt for Stage 1 only:
+
+> Implement only Stage 1, “Record and protect the baseline,” from Exercise 2 TODO 6. Make no gameplay or GUI behavior changes. Do not refactor production ownership yet and do not implement immutable contracts or any later migration stage. Preserve all current public behavior and all existing tests; add only focused characterization tests if a required existing behavior is not already protected. Keep the GUI-independent core free of tkinter imports. Produce a focused diff, run `.\.venv\Scripts\python.exe -m unittest discover -s tests -v` and `.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests`, then run `git diff --check` and report exact results. Stop after Stage 1.
+
+### 8. Readiness Checklist
+
+- [x] Every mutable state item and every rule still has exactly one target owner.
+- [x] The fixed names remain `BoardManager`, `RuleEngine`, `ScoreRules`, `CascadeResolver`, `GameCoordinator`, `DesktopUIAdapter`, and `ApplicationStartup`.
+- [x] All TODO 3 runtime dependencies remain acyclic and no reverse dependency is proposed.
+- [x] All gameplay, selection, score, restart, recovery, and resolution logic remains GUI-independent; tkinter stays in `main.py`.
+- [x] The plan uses Python 3.14 and only the standard library.
+- [x] No networking, persistence, special tile, level, animation framework, plug-in system, or other out-of-scope product feature is introduced.
+- [x] The nine stages are small enough for separate review and commits and preserve behavior at every boundary.
+- [x] Unresolved compatibility lifetime, presentation scheduling, and private readiness representation are identified explicitly rather than guessed.
+- [x] The local Python 3.14 virtual environment is available, the automated baseline passes, and the startup guard is aligned to accept Python 3.14 or newer; the architecture is ready for staged implementation. Manual GUI acceptance under Python 3.14 remains pending.
 
 ## Prompt log
 
@@ -1301,4 +1423,269 @@ Make these consistency corrections:
 Keep both sequence diagrams at no more than five participants, preserve all seven fixed component names and TODO 3 dependency directions, and make no implementation proposal.
 
 Run git diff --check and report the result. Do not commit.
+```
+
+### TODO 6 prompt
+
+```text
+Complete only TODO 6 in exercise02_architecture.md. Do not modify TODO 1–5, source code, tests, README.md, or writeup.md.
+
+Read these sources before writing:
+
+- writeup.md for the validated requirements;
+- TODO 1–5 in exercise02_architecture.md;
+- main.py, match3.py, and tests/test_match3.py as read-only evidence of the current implementation.
+
+Replace the existing section “Notes for TODO 6 (current code)” with:
+
+## TODO 6: Architecture-Guided Implementation Plan
+
+Reuse its useful observations and current-code mapping, but integrate and update them as part of TODO 6. Correct stale wording where necessary. In particular, if the lifecycle states came from the Exercise 1 state model rather than TODO 5 of this document, name the source correctly.
+
+The current game is already implemented and validated. Therefore, describe a behavior-preserving migration/refinement plan from the current two-file implementation toward the architecture defined in TODO 1–5. Do not describe this as a greenfield implementation and do not implement the migration.
+
+Include the following subsections.
+
+### 1. Implementation Readiness Assessment
+
+State whether the architecture is concrete enough to guide code generation.
+
+Distinguish between:
+
+- decisions already fixed by TODO 1–5;
+- details that must be clarified before generating code;
+- details that can safely remain deferred.
+
+Do not reopen component ownership or the selected architectural pattern.
+
+### 2. Current-to-Target Gap Analysis
+
+Add a table with:
+
+- Concern or responsibility
+- Current code location and behavior
+- Target component and owner
+- Gap
+- Required implementation action
+
+Inspect the actual code and cite only real files, classes, functions, methods, and state fields.
+
+At minimum, evaluate:
+
+- board ownership and tile-provider state;
+- move and match rules;
+- cascade orchestration;
+- scoring formula versus accumulated score;
+- selected-coordinate ownership;
+- restart and dead-board recovery;
+- immutable snapshots and result contracts;
+- GUI input-lock ownership and timing;
+- GUI presentation;
+- startup and dependency wiring.
+
+Explicitly identify where the current code already satisfies the architecture and where it does not.
+
+### 3. Minimal Physical Code Structure
+
+Keep the design proportional to this small prototype.
+
+Use the following physical layout unless the actual code provides a concrete reason to deviate:
+
+- match3.py:
+  GUI-independent contracts and the logical components BoardManager,
+  RuleEngine, ScoreRules, CascadeResolver, and GameCoordinator.
+- main.py:
+  DesktopUIAdapter, ApplicationStartup, and the executable entry point.
+- tests/test_match3.py:
+  GUI-independent unit and workflow tests.
+
+The seven architectural components are logical ownership boundaries and do not require seven files or seven classes. Explain which components should be classes, pure functions, or startup functions and why. Do not introduce a package hierarchy, persistence, networking, plug-in system, framework, or third-party dependency.
+
+Add a mapping table:
+
+- Fixed architectural component
+- Target file
+- Proposed Python representation
+- State owned
+- Constructor dependencies
+- Main provided operations
+
+Preserve all dependency directions from TODO 3.
+
+### 4. Concrete Data and Interface Decisions
+
+Make the conceptual TODO 3 contracts concrete enough for later Python code generation without writing implementations.
+
+Cover:
+
+- Coordinate
+- TileIdentity and the temporary empty-cell representation
+- BoardSnapshot
+- MatchSet
+- ResultReason
+- ResolutionStep
+- ResolutionResult
+- SessionSnapshot
+- InteractionResult
+- the replaceable deterministic/random tile provider owned by BoardManager
+
+For each, give:
+
+- proposed standard-library Python representation;
+- mutability;
+- producer;
+- consumers;
+- important invariants.
+
+Prefer immutable tuples, frozen dataclasses, enums, callable objects, or similarly simple Python 3.14 standard-library mechanisms.
+
+Clarify the minimum ResultReason values needed for selection, invalid/out-of-bounds input, non-adjacency, no-match rejection, accepted move, restart, and dead-board recovery.
+
+Every choice not required by writeup.md must be marked “ASSUMPTION:”.
+
+### 5. Incremental Implementation Sequence
+
+Create a numbered, behavior-preserving implementation plan. Use small stages with explicit completion criteria.
+
+The sequence should cover:
+
+1. record the passing baseline and protect existing behavior;
+2. introduce immutable contracts without changing game behavior;
+3. establish RuleEngine and ScoreRules as the single rule owners;
+4. establish BoardManager as the sole board and tile-provider owner;
+5. move cascade sequencing into CascadeResolver;
+6. establish GameCoordinator as the owner of selection, accumulated score, restart, recovery, and workflow;
+7. adapt Match3App into DesktopUIAdapter and keep the GUI lock only in the adapter;
+8. make ApplicationStartup construct and wire dependencies;
+9. run regression and manual GUI acceptance checks.
+
+For each stage, state:
+
+- what architectural boundary is established;
+- which existing behavior must remain unchanged;
+- which automated or manual checks provide completion evidence;
+- which later stage depends on it.
+
+Do not provide implementation bodies or patches.
+
+### 6. Verification Plan
+
+Map each component and important integration boundary to the tests needed during implementation.
+
+Include:
+
+- existing tests that can remain;
+- tests that would need to be moved or renamed;
+- new tests for GameCoordinator-owned first/second selection;
+- immutable or defensive BoardSnapshot behavior;
+- score-total ownership and score increment calculation;
+- restart reset and dead-board score preservation;
+- deterministic tile-provider injection;
+- dependency-boundary checks such as importing match3.py without tkinter;
+- manual GUI checks for rendering, feedback, input locking, restart, and clean close.
+
+Do not claim that a test exists unless it is present in the current repository. Label proposed tests as proposed.
+
+### 7. Coding-Agent Handoff
+
+Provide a concise ordered list of the artifacts that should be supplied to a coding agent:
+
+- writeup.md;
+- TODO 1–6 of exercise02_architecture.md;
+- current source and tests;
+- the required validation commands.
+
+Then include a short sample handoff prompt for implementing only the first migration stage. It must require:
+
+- no behavior changes;
+- no tkinter import in GUI-independent core code;
+- preservation of public behavior and existing tests;
+- a focused diff;
+- test and compile verification;
+- no implementation of later stages.
+
+### 8. Readiness Checklist
+
+End TODO 6 with a short checklist confirming:
+
+- every state and rule still has one owner;
+- all seven component names remain unchanged;
+- dependency directions remain acyclic;
+- the core remains GUI-independent;
+- the plan uses only Python 3.14 and the standard library;
+- no out-of-scope feature was introduced;
+- implementation stages are small enough for separate review and commits;
+- unresolved issues are explicitly identified rather than guessed.
+
+Read-only validation is allowed. Run:
+
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests
+git diff --check
+git status --short
+
+Record test and compile results only if they were actually run. Confirm that only exercise02_architecture.md changed.
+
+Append this exact prompt to the Prompt log.
+
+Do not change code and do not commit.
+```
+
+### Runtime update note
+
+The project runtime changed to Python 3.14 because the earlier Windows Store interpreter was unavailable. The project `.venv` now uses the installation based at `C:\Python314`; all 16 unit tests and the compile check pass with `.\.venv\Scripts\python.exe`. All future Python commands for this project should use that virtual-environment executable rather than the Windows launcher.
+
+### Runtime-alignment prompt
+
+```text
+Perform one narrowly scoped runtime-alignment change. This is separate from the architectural migration stages in TODO 6.
+
+Authorized files only:
+
+- main.py
+- README.md
+- writeup.md
+- exercise02_architecture.md
+
+1. In main.py, inspect the existing exact Python-version startup guard.
+   Replace the legacy exact Python 3.13 check with a minimum-version check
+   that accepts Python 3.14 and newer and rejects older versions.
+   Update only the associated error message.
+   Do not change any gameplay, tkinter layout, event handling, scoring,
+   board logic, or imports except what is strictly required for this guard.
+
+2. In README.md:
+   - keep Python 3.14 as the documented reference runtime;
+   - keep the current .venv-based run and test commands;
+   - remove the paragraph saying that main.py still has an incompatible
+     legacy guard.
+
+3. In writeup.md:
+   - keep the Python 3.14 runtime update;
+   - update only statements that currently describe the startup guard as
+     incompatible or still requiring alignment;
+   - do not change requirements, gameplay descriptions, traceability, or
+     reflection content unrelated to the runtime alignment;
+   - do not claim that the GUI was manually rechecked unless the user later
+     confirms it.
+
+4. In exercise02_architecture.md:
+   - preserve TODO 1–6 and all architecture decisions;
+   - update only the current-code observations, gap-analysis row,
+     ApplicationStartup verification entry, and readiness checklist statements
+     that say the startup guard is still incompatible;
+   - state that the guard has been aligned, but leave the Python 3.14 manual
+     GUI recheck as pending until the user confirms it;
+   - append this exact prompt to the Prompt log.
+
+5. Run:
+
+.\.venv\Scripts\python.exe -V
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests
+git diff --check
+git diff --stat
+git status --short
+
+Report exact results. Do not commit.
 ```
