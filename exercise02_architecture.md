@@ -260,6 +260,86 @@ This is an interface-level flow only; detailed alternatives and timing belong to
 
 No architectural pattern or component/sequence diagram is selected in TODO 3.
 
+## TODO 4: Architectural Pattern Selection
+
+**ASSUMPTION:** The quality trade-offs and future-extension allocations below are architectural interpretations for Exercise 2. Exercise 1 defines required behavior and scope but does not select an architectural style or assign hypothetical future features to components.
+
+### Candidate Architecture Comparison
+
+| Candidate | Fit for This Prototype | Advantages | Disadvantages | Decision |
+| --- | --- | --- | --- | --- |
+| Layered architecture | Good for enforcing one-way dependency direction and separating GUI, coordination, and domain concerns. It is compatible with the synchronous local tkinter application. | Low coupling across layer boundaries; core testability without a GUI; clear dependency direction; familiar maintenance model. | A strict layer-only design can hide cohesive component ownership, encourage pass-through calls, and imply unnecessary packages or files for a small prototype. Extensibility is limited if every change must follow rigid technical layers. | Use one-way dependency layering as an internal organization rule, not as the primary style. |
+| Modular component-based architecture | Best fit for the seven named components and their single ownership rules. It supports synchronous calls while keeping domain behavior independent of tkinter. | Cohesive responsibilities; explicit interfaces; deterministic replacement of board tile-provider state; focused testing; low coupling; components such as `ScoreRules` can evolve without changing unrelated rules. | More conceptual interfaces than the current two-file implementation; boundaries require discipline; separate classes or files for every component could add boilerplate. | **Selected as the primary architectural style.** |
+| Event-driven architecture | Limited fit. Tkinter supplies GUI events, but the domain move workflow is intentionally one synchronous call with ordered results. | Natural at the GUI boundary; could support richer asynchronous animation or additional external event producers later. | An event bus or asynchronous domain flow would complicate ordering, error handling, testing, input locking, and state ownership without helping the current offline prototype. It risks hidden coupling through events. | Rejected for the complete system; tkinter events remain an adapter concern only. |
+
+MVC could be considered later as an internal way to organize tkinter presentation and event-handling details inside `DesktopUIAdapter`. It is not selected as the architecture for the complete system because it does not by itself define the core components, domain ownership, or dependency graph.
+
+### Selected Pattern
+
+The system uses a **modular component-based architecture with one-way dependency layering and `ApplicationStartup` as the composition root**.
+
+The primary style is modular component-based: the seven existing components remain the units of responsibility, state ownership, and provided behavior. One-way layering is a dependency organization rule inside that style, not a second competing architecture. `ApplicationStartup` creates and wires the graph; runtime calls follow the acyclic directions established in TODO 3.
+
+The conceptual dependency layers are:
+
+- **Composition/lifecycle:** `ApplicationStartup`
+- **GUI adapter:** `DesktopUIAdapter`
+- **Application coordination:** `GameCoordinator`
+- **Domain state and services:** `BoardManager`, `RuleEngine`, `CascadeResolver`, `ScoreRules`
+
+These are dependency layers, not a requirement for one Python package, directory, module, or class per layer. The logical components and ownership rules must remain visible even if several small components later share one physical module.
+
+The seven components fit the selected style without renaming or adding components. `BoardManager` owns mutable board and tile-provider state; `RuleEngine` and `ScoreRules` are stateless domain services; `CascadeResolver` owns resolution order; `GameCoordinator` owns session workflow and state; `DesktopUIAdapter` contains tkinter-facing behavior and GUI state; and `ApplicationStartup` owns construction and lifecycle only.
+
+Tkinter delivering click and window events does not make the whole application event-driven. Those events terminate at `DesktopUIAdapter`, which makes synchronous calls to `GameCoordinator` and renders returned domain results. The architecture introduces no event bus, asynchronous domain workflow, networking, persistence, or plug-in framework.
+
+### Quality-Attribute Justification
+
+| Quality Attribute | Architectural Mechanism | Concrete Benefit | Relevant Requirements or Constraints |
+| --- | --- | --- | --- |
+| Maintainability | Cohesive components with one owner for each state and rule; logical components need not become separate files. | A change to matching, scoring, board storage, or GUI wording has a bounded review surface and avoids duplicated decisions. | UR-08 and NFR-05, deferred further maintainability goals; TODO 1 ownership rules |
+| Testability without a GUI | All game logic is below `DesktopUIAdapter`; no core component imports tkinter. | Board generation, selection, rule evaluation, cascades, scoring, restart, and recovery can be exercised in ordinary unit tests. | UR-07, NFR-07; GUI-independent testability and core/GUI separation |
+| Deterministic testing | `BoardManager` owns a constructor-injected random, seeded, or deterministic tile provider; `GameCoordinator` accepts a supplied board. | Edge cases and cascade sequences can be reproduced without player-facing test controls. | FR-11, NFR-07; deterministic verification constraint |
+| Extensibility | Rules, scoring policy, resolution order, coordination, and GUI adaptation have explicit component boundaries. | A focused policy or presentation change can extend the relevant contract without forcing unrelated components to absorb the feature. | Deferred UR-08 and NFR-05; no new current requirement |
+| Low coupling | One-way dependencies, immutable shared contracts, and `ApplicationStartup`-only construction. | Components do not reach through coordination, share mutable board lists, or depend on tkinter indirectly. | UR-07, NFR-07; core/GUI separation and acyclic dependency constraints |
+| Cohesive ownership | `BoardManager`, `GameCoordinator`, and `DesktopUIAdapter` exclusively own their mutable state; domain rules have one implementation. | Conflicting state updates, duplicate match logic, and ambiguous score ownership are prevented. | FR-01, FR-05, FR-07, FR-08, DR-02, DR-03, DR-04, DR-06 |
+| Reliability | `GameCoordinator` sequences moves and recovery; `BoardManager` validates stable boards; `CascadeResolver` completes ordered resolution before input resumes. | Player input is exposed only with a full, match-free, playable board, and rejected moves preserve board and score. | FR-03, FR-04, FR-06, FR-08, NFR-03, NFR-13, DR-03–DR-05 |
+| Simplicity / KISS | Seven logical components, synchronous calls, no event bus or speculative infrastructure, and no mandatory file-per-component rule. | The design gains testable boundaries without adding networking, persistence, plug-ins, or asynchronous coordination to the first prototype. | NFR-08; Must-scope and no-out-of-scope-feature constraints |
+
+### Support for Future Evolution
+
+The following examples illustrate how boundaries could absorb later change; they do not add requirements or components to the present Must-scope architecture.
+
+| Possible future extension | Main existing component affected | Interface or contract that may need extension | Components expected to remain unchanged |
+| --- | --- | --- | --- |
+| Special tiles and power-ups | `RuleEngine` for activation and effect rules; `BoardManager` for richer tile state; `DesktopUIAdapter` for rendering | `BoardSnapshot`, `MatchSet`, and `ResolutionStep` may need tile/effect data. `CascadeResolver` may consume rule-produced effects while retaining resolution-order ownership. | `ScoreRules` if effects do not alter points; `GameCoordinator` if activation remains part of the same move request; `ApplicationStartup` |
+| Alternative scoring and level progression | `ScoreRules` for scoring policy; `GameCoordinator` for authoritative progression state | Score calculation inputs may need level/context; `SessionSnapshot` may expose progression; `DesktopUIAdapter` may render it. | `RuleEngine` and `CascadeResolver`; `BoardManager` if levels do not change board generation |
+| Animated tile movement | `DesktopUIAdapter` for scheduling and rendering movement | `ResolutionStep` may need movement/refill transition data while retaining domain-only values; input-lock duration remains a GUI concern. | `RuleEngine`, `ScoreRules`, and board/session ownership; `ApplicationStartup` unless new lifecycle resources are required |
+| Persistent high-score storage | `ApplicationStartup` for constructing a future storage adapter or service; `GameCoordinator` for exposing the score at an appropriate lifecycle point | A future score-recording boundary and possibly `SessionSnapshot` high-score data; no present interface is changed now. | `BoardManager`, `RuleEngine`, `CascadeResolver`, and `ScoreRules` |
+
+Persistent high-score storage is explicitly outside the current Must scope. It is described only as a possible future adapter or service and is not added to the present seven-component architecture. The same applies to special tiles, power-ups, levels, and production animation.
+
+### Trade-offs and Risks
+
+- The selected architecture defines more conceptual interfaces than the current two-file prototype. That increases design and review work even when the behavior stays small.
+- Turning every logical component into a separate class and file could create pass-through boilerplate and navigation overhead. The rule is **logical component, not necessarily one class or file**: physical packaging should be only as granular as needed to preserve ownership and dependency direction.
+- Synchronous interaction makes the move flow easy to test and protects state ownership, but it limits richer animation and background processing. A future animation change must not move domain state into the GUI or silently introduce asynchronous domain races.
+- Component boundaries and shared contracts must remain synchronized as requirements evolve. For example, adding tile effects would require coordinated contract changes while keeping match rules in `RuleEngine` and board state in `BoardManager`.
+- A composition root centralizes construction cleanly, but careless additions to `ApplicationStartup` could turn it into a gameplay controller. Its lifecycle-only boundary must be maintained.
+
+These costs are controlled by keeping the component set fixed at seven, avoiding speculative infrastructure, colocating small stateless components physically when useful, and reviewing dependencies against the TODO 3 table rather than creating wrappers automatically.
+
+### Architecture Decision Record
+
+- **Context:** The prototype needs GUI-independent game logic, deterministic tests, clear ownership of board/session/GUI state, and a synchronous tkinter interface, while remaining small and offline.
+- **Decision:** Use a modular component-based architecture with one-way dependency layering and `ApplicationStartup` as the composition root. Retain the seven components and interfaces from TODO 2 and TODO 3.
+- **Alternatives considered:** A primarily layered architecture, a system-wide event-driven architecture, and MVC as a GUI-only organizational option.
+- **Positive consequences:** Cohesive ownership, low coupling, deterministic core testing, replaceable policy boundaries, explicit dependency direction, and isolation of tkinter.
+- **Negative consequences:** More conceptual interfaces than the current implementation, possible boilerplate, synchronous animation limits, and ongoing boundary-maintenance cost.
+- **Deferred consequences:** Physical modules/classes, detailed interface representations, diagrams, any asynchronous animation mechanism, future persistence adapter, and implementation refactoring are left to later decisions or out-of-scope evolution.
+
+No diagram or physical refactor is introduced in TODO 4.
+
 ## Notes for TODO 6 (current code)
 
 ### Current Implementation Observations
@@ -570,6 +650,165 @@ Do not create component or sequence diagrams; that belongs to TODO 5.
 Do not modify Python code, README.md, writeup.md, or tests.
 Do not commit yet.
 
+Append this exact prompt to the Prompt log.
+Run git diff --check when finished.
+```
+
+### TODO 4 prompt
+
+```text
+Continue Exercise 2 in exercise02_architecture.md.
+
+Complete only TODO 4: Select and Justify an Architectural Pattern.
+
+Insert TODO 4 immediately after TODO 3 and before
+"Notes for TODO 6 (current code)".
+
+Do not modify TODO 1, TODO 2, or TODO 3.
+Use the existing seven components, interfaces, ownership rules, and acyclic
+dependency directions as authoritative.
+
+## Architectural styles to compare
+
+Compare at least:
+
+1. Layered architecture
+2. Modular component-based architecture
+3. Event-driven architecture
+
+You may briefly mention MVC only as a possible GUI organization, not as the
+selected architecture for the complete system.
+
+Select this primary architectural style:
+
+"Modular component-based architecture with one-way dependency layering and an
+ApplicationStartup composition root."
+
+Explain that:
+
+- the primary style is modular component-based;
+- one-way layering is a dependency organization rule inside that style;
+- tkinter events do not make the whole application event-driven;
+- no event bus, asynchronous domain workflow, networking, persistence, or
+  plug-in framework is introduced.
+
+## Required structure
+
+## TODO 4: Architectural Pattern Selection
+
+### Candidate Architecture Comparison
+
+Create a concise table with:
+
+- Candidate
+- Fit for This Prototype
+- Advantages
+- Disadvantages
+- Decision
+
+Compare each candidate with respect to:
+
+- maintainability,
+- extensibility,
+- testability,
+- coupling,
+- implementation complexity,
+- compatibility with the synchronous local tkinter prototype.
+
+### Selected Pattern
+
+State the decision explicitly:
+
+The system uses a modular component-based architecture with one-way dependency
+layering and ApplicationStartup as the composition root.
+
+Explain how the seven existing components fit the selected style without
+renaming or adding components.
+
+Describe the conceptual dependency layers:
+
+- Composition/lifecycle: ApplicationStartup
+- GUI adapter: DesktopUIAdapter
+- Application coordination: GameCoordinator
+- Domain state and services:
+  BoardManager, RuleEngine, CascadeResolver, ScoreRules
+
+Clarify that these are dependency layers, not a requirement for one Python
+package or directory per layer.
+
+### Quality-Attribute Justification
+
+Create a table with:
+
+- Quality Attribute
+- Architectural Mechanism
+- Concrete Benefit
+- Relevant Requirements or Constraints
+
+Cover at least:
+
+- maintainability,
+- testability without a GUI,
+- deterministic testing,
+- extensibility,
+- low coupling,
+- cohesive ownership,
+- reliability,
+- simplicity/KISS.
+
+Use requirement IDs or the named cross-cutting constraints from TODO 1 where
+applicable.
+
+### Support for Future Evolution
+
+Explain how the selected architecture could accommodate these examples without
+implementing them now:
+
+- special tiles and power-ups,
+- alternative scoring and level progression,
+- animated tile movement,
+- persistent high-score storage.
+
+For every extension identify:
+
+- the main existing component affected,
+- any interface that may need extension,
+- which components should remain unchanged.
+
+Persistent high-score storage is outside the current Must scope. Describe it
+only as a possible future adapter or service; do not add it to the present
+seven-component architecture.
+
+### Trade-offs and Risks
+
+State the real costs of the selected architecture, including:
+
+- more conceptual interfaces than the current two-file prototype,
+- possible boilerplate if every logical component becomes a separate class,
+- synchronous interaction limiting richer animation,
+- the need to keep component boundaries synchronized during future changes.
+
+Explain how the "logical component, not necessarily one class or file" rule
+controls unnecessary complexity.
+
+### Architecture Decision Record
+
+Add a short ADR-style summary:
+
+- Context
+- Decision
+- Alternatives considered
+- Positive consequences
+- Negative consequences
+- Deferred consequences
+
+Do not introduce new requirements.
+Do not create diagrams; those belong to TODO 5.
+Do not change code or propose a physical refactor yet.
+Do not modify README.md, writeup.md, or tests.
+Do not commit yet.
+
+Mark any new interpretation not stated in writeup.md with "ASSUMPTION:".
 Append this exact prompt to the Prompt log.
 Run git diff --check when finished.
 ```
