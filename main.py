@@ -166,9 +166,9 @@ class Match3App:
 
 
 def main() -> int:
-    if sys.version_info[:2] != (3, 13):
+    if sys.version_info[:2] < (3, 14):
         message = (
-            "This prototype requires Python 3.13. "
+            "This prototype requires Python 3.14 or newer. "
             f"Detected {sys.version_info.major}.{sys.version_info.minor}."
         )
         print(message, file=sys.stderr)

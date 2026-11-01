@@ -673,7 +673,7 @@ No contradiction was found between the models, the Must-have scope, and TODO 1's
 
 ### 1. Implementation approach
 
-The prototype uses only Python 3.13 standard-library modules. `match3.py` owns the board representation, generation, move validation, whole-board match detection, distinct-cell scoring, gravity, deterministic or random refill, cascade resolution, restart, and dead-board recovery. It has no dependency on `tkinter`, so controlled boards, seeds, and refill sequences can be exercised without opening a window.
+The prototype uses only Python 3.14 standard-library modules. `match3.py` owns the board representation, generation, move validation, whole-board match detection, distinct-cell scoring, gravity, deterministic or random refill, cascade resolution, restart, and dead-board recovery. It has no dependency on `tkinter`, so controlled boards, seeds, and refill sequences can be exercised without opening a window.
 
 `main.py` is a thin `tkinter` view/controller. Each tile is a mouse-operated button identified by both a color and a letter. The controller tracks the first selection, visibly highlights it, reports accepted and rejected attempts, refreshes the score after each resolution step through a GUI-neutral observer, and disables both tile and Restart controls while a move or restart is being processed. Logic returns control only after the board is full, stable, and playable. Dead boards are regenerated while the current score is preserved.
 
@@ -683,7 +683,7 @@ Board generation fills cells while preventing immediate three-tile runs, then ac
 
 | Path | Responsibility |
 | --- | --- |
-| `main.py` | Python 3.13 runtime check, `tkinter` GUI, mouse interaction, feedback, input lock, and application entry point. |
+| `main.py` | Minimum Python 3.14 runtime check, `tkinter` GUI, mouse interaction, feedback, input lock, and application entry point. |
 | `match3.py` | GUI-independent board and game logic plus centralized board, tile, and scoring constants. |
 | `tests/test_match3.py` | Standard-library `unittest` coverage for generation, moves, matches, scoring, cascades, recovery, restart, determinism, and performance bounds. |
 | `tests/__init__.py` | Test package marker. |
@@ -692,24 +692,24 @@ Board generation fills cells while preventing immediate three-tile runs, then ac
 
 ### 3. Run and test instructions
 
-The verified reference combination is Windows 11 with Python 3.13 and its bundled `tkinter`. No network, account, elevated privilege, external asset, or third-party package is needed.
+The documented reference combination is Windows 11 with Python 3.14 and its bundled `tkinter`. The automated tests and compile check pass in the project virtual environment, and `main.py` accepts Python 3.14 or newer. The GUI has not yet been manually rechecked under the Python 3.14 runtime. No network, account, elevated privilege, external asset, or third-party package is needed.
 
 From the project root in PowerShell, launch the GUI with:
 
 ```powershell
-py -3.13 main.py
+.\.venv\Scripts\python.exe main.py
 ```
 
 Run all automated tests with:
 
 ```powershell
-py -3.13 -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Check syntax without launching the GUI with:
 
 ```powershell
-py -3.13 -m compileall -q main.py match3.py tests
+.\.venv\Scripts\python.exe -m compileall -q main.py match3.py tests
 ```
 
 ### 4. Must-requirement-to-implementation traceability
@@ -721,7 +721,7 @@ py -3.13 -m compileall -q main.py match3.py tests
 | UR-03, FR-09, NFR-01 | Six GUI styles pair distinct colors with letters A–F. Selected tiles use a persistent sunken border; status text and color distinguish accepted and rejected attempts. |
 | UR-04, FR-07, FR-10 | The score label displays `Game.score`; a resolution observer refreshes it after every cascade step; Restart calls `Game.restart`, resetting score to zero and generating a new validated board. |
 | UR-05, FR-08, DR-04, DR-05 | `ensure_playable` detects a stable dead board and regenerates it without changing score. It is called after every accepted move; deterministic dead-board tests verify continuity. |
-| UR-06, NFR-06, NFR-09, NFR-10, NFR-12 | README and this section document Windows 11, Python 3.13, exact commands, standard-library-only offline operation, and no persistent game data. |
+| UR-06, NFR-06, NFR-09, NFR-10, NFR-12 | README and this section document Windows 11, Python 3.14, virtual-environment commands, standard-library-only offline operation, and no persistent game data. |
 | UR-07, FR-11, NFR-07 | `Game` accepts a seeded random source, predefined board, and refill iterable. `unittest` scenarios reproduce initialization, valid/invalid swaps, long/intersecting matches, cascades, scoring, recovery, and restart. |
 | UR-09, NFR-02, NFR-03 | Selection/rejection feedback is rendered directly in the mouse handler. Timed tests exercise 100 generation seeds, 10 dead-board recoveries, and a controlled ten-step cascade with a two-second bound. |
 | FR-01 | `generate_playable_board` returns an 8 x 8 board using the six configured tile types, with no match and at least one legal move; generation tests validate the invariant and deterministic seed behavior. |
@@ -732,7 +732,7 @@ py -3.13 -m compileall -q main.py match3.py tests
 
 ### 5. Known limitations or remaining mismatches
 
-No known mismatch remains against the validated Must requirements. Automated checks cover the core logic and documented processing thresholds, while the OS-level GUI observations in FR-09, NFR-01, NFR-02, and NFR-13 still require the short manual acceptance checks listed in the delivery report. The deferred TODO 4 requirements (UR-08, NFR-04, NFR-05, and NFR-11) were not expanded into additional prototype features.
+The automated checks cover the core logic and documented processing thresholds, and the startup guard is aligned with the documented Python 3.14 minimum. The OS-level GUI observations in FR-09, NFR-01, NFR-02, and NFR-13, including a manual GUI recheck under Python 3.14, still require the short manual acceptance checks listed in the delivery report. The deferred TODO 4 requirements (UR-08, NFR-04, NFR-05, and NFR-11) were not expanded into additional prototype features.
 
 ## TODO 7: Reflection on the Vibe Coding Workflow
 
@@ -740,7 +740,7 @@ This exercise showed me that vibe coding can support the whole Requirements Engi
 
 The coding agent was most helpful when the work involved rapidly organizing a large amount of loosely expressed information. It could take an ambiguous idea and produce categories, identifiers, tables, traceability links, alternative flows, and verification methods much faster than I could draft them manually. That was especially valuable in the structured requirements and validation stages, where omissions and relationships are difficult to see in unstructured prose. The agent also carried the same concepts forward into the models and code: the matched-coordinate set became distinct-cell scoring, the ready-state invariant became board validation, and the deterministic test requirement became seeded random sources, predefined boards, and refill sequences. It also generated the implementation, README, traceability table, and `unittest` coverage as one connected set rather than as unrelated artifacts.
 
-However, human judgment remained essential. I still had to decide whether the agent’s assumptions matched the intended exercise and whether a proposed detail belonged in the Must scope. Generated requirements can look authoritative while still being ambiguous, duplicated, too strict, or partly invented. The validation step therefore mattered as much as the initial generation. I had to review overlaps between user, functional, and domain requirements and distinguish useful refinement from accidental duplication. I also learned that constraints should be challenged when they do not improve the product. Requiring exactly Python 3.13, rather than a suitable supported Python version, created unnecessary interpreter troubleshooting when the IDE first selected Python 3.14. The agent eventually corrected the environment, but the time spent there did not improve the match-3 behavior. Most importantly, an agent saying “Done” was only a status claim. It did not prove that the board rules, GUI feedback, or acceptance criteria were correct.
+However, human judgment remained essential. I still had to decide whether the agent’s assumptions matched the intended exercise and whether a proposed detail belonged in the Must scope. Generated requirements can look authoritative while still being ambiguous, duplicated, too strict, or partly invented. The validation step therefore mattered as much as the initial generation. I had to review overlaps between user, functional, and domain requirements and distinguish useful refinement from accidental duplication. I also learned that constraints should be challenged when they do not improve the product. Requiring one exact Python version, rather than a suitable supported version, created unnecessary interpreter troubleshooting when the configured runtime changed. The environment was eventually aligned on Python 3.14, but the time spent there did not improve the match-3 behavior. Most importantly, an agent saying “Done” was only a status claim. It did not prove that the board rules, GUI feedback, or acceptance criteria were correct.
 
 Prompt quality strongly influenced the output. Narrow, testable prompts produced better results than broad requests to “make a game.” Naming the exact files, required behaviors, acceptance evidence, standard-library constraint, and prohibited changes reduced scope drift. The TODO 7 instruction to append one section and modify only `writeup.md` is a good example of a safe boundary. At the same time, over-constraining a prompt can force unnecessary work or encode a poor decision before implementation begins.
 
