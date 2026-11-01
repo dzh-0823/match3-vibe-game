@@ -6,6 +6,12 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
+from high_scores import (
+    HighScoreError,
+    HighScoreService,
+    HighScoreStore,
+    default_high_score_path,
+)
 from match3 import BOARD_COLUMNS, BOARD_ROWS, Game
 
 
@@ -19,18 +25,27 @@ TILE_STYLES = (
 )
 
 
+def format_leaderboard(scores: tuple[int, ...]) -> str:
+    if not scores:
+        return "Top scores: No completed games yet."
+    ranked_scores = "  |  ".join(f"{rank}. {score}" for rank, score in enumerate(scores, start=1))
+    return f"Top scores: {ranked_scores}"
+
+
 class Match3App:
     """Small desktop view/controller; all game rules live in ``match3``."""
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, high_scores: HighScoreService) -> None:
         self.root = root
         self.game = Game()
+        self.high_scores = high_scores
         self.selected: tuple[int, int] | None = None
         self.busy = False
 
-        root.title("Match-3 Prototype")
+        root.title("Match-3 Game")
         root.resizable(False, False)
         root.configure(bg="#20252b")
+        root.protocol("WM_DELETE_WINDOW", self.close)
 
         header = tk.Frame(root, bg="#20252b", padx=12, pady=10)
         header.pack(fill="x")
@@ -50,6 +65,20 @@ class Match3App:
             padx=12,
         )
         self.restart_button.pack(side="right")
+
+        self.high_scores_var = tk.StringVar()
+        tk.Label(
+            root,
+            textvariable=self.high_scores_var,
+            font=("TkDefaultFont", 10, "bold"),
+            fg="#d8dee9",
+            bg="#20252b",
+            anchor="w",
+            width=48,
+            padx=12,
+            pady=2,
+        ).pack(fill="x")
+        startup_warning = self._load_high_scores()
 
         self.board_frame = tk.Frame(root, bg="#11151a", padx=6, pady=6)
         self.board_frame.pack(padx=12)
@@ -71,7 +100,7 @@ class Match3App:
                 button_row.append(button)
             self.buttons.append(button_row)
 
-        self.status_var = tk.StringVar(value="Select two adjacent tiles.")
+        self.status_var = tk.StringVar(value=startup_warning or "Select two adjacent tiles.")
         self.status_label = tk.Label(
             root,
             textvariable=self.status_var,
@@ -146,11 +175,43 @@ class Match3App:
         self.selected = None
         self._set_busy(True)
         try:
+            save_message, save_failed = self._complete_current_game()
             self.game.restart()
-            self.status_var.set("New game started. Select two adjacent tiles.")
-            self.status_label.configure(fg="#d8dee9")
+            prefix = f"{save_message} " if save_message else ""
+            self.status_var.set(f"{prefix}New game started. Select two adjacent tiles.")
+            self.status_label.configure(fg="#ffb3b3" if save_failed else "#d8dee9")
         finally:
             self._set_busy(False)
+
+    def close(self) -> None:
+        _, save_failed = self._complete_current_game()
+        if save_failed:
+            messagebox.showwarning(
+                "High-score warning",
+                "The current score could not be saved. The game will still close normally.",
+                parent=self.root,
+            )
+        self.root.destroy()
+
+    def _load_high_scores(self) -> str | None:
+        try:
+            scores = self.high_scores.load()
+        except HighScoreError:
+            self.high_scores_var.set("Top scores: unavailable")
+            return "High scores could not be loaded. Play can continue."
+        self.high_scores_var.set(format_leaderboard(scores))
+        return None
+
+    def _complete_current_game(self) -> tuple[str, bool]:
+        score = self.game.score
+        try:
+            result = self.high_scores.complete_game(score)
+        except HighScoreError:
+            return "High score could not be saved.", True
+        self.high_scores_var.set(format_leaderboard(result.scores))
+        if result.saved:
+            return f"Saved {score} points to the leaderboard.", False
+        return "", False
 
     def _show_resolution_step(self, step: int, cleared: int) -> None:
         self.status_var.set(f"Resolving step {step}: {cleared} tiles cleared.")
@@ -176,7 +237,8 @@ def main() -> int:
 
     root = tk.Tk()
     try:
-        Match3App(root)
+        high_scores = HighScoreService(HighScoreStore(default_high_score_path()))
+        Match3App(root, high_scores)
     except tk.TclError as exc:
         messagebox.showerror("Match-3 startup error", str(exc), parent=root)
         root.destroy()
